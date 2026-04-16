@@ -2630,7 +2630,8 @@ module linspace_helper
   implicit none
   private
   public :: linspace, meshgrid2, meshgrid3
-  public :: map_1D_fun, annulus_mesh, cartesian_mesh, perturb_mesh
+  public :: map_1D_fun, perturb_mesh
+  public :: cartesian_mesh, annulus_mesh, sphere_mesh
 
   interface
     pure function map_1D_fun(x_in) result(x_out)
@@ -2686,7 +2687,7 @@ contains
   end function cartesian_mesh
 
   pure function annulus_mesh(nr,nt,nz,end_pts,r_fun,theta_fun,z_fun) result(xyz)
-    use set_constants, only : zero, one, two, pi, fourth
+    use set_constants, only : zero, one, two, pi, half
     integer, intent(in) :: nr, nt, nz
     real(dp), dimension(3,2), optional, intent(in) :: end_pts
     procedure(map_1D_fun), optional :: r_fun, theta_fun, z_fun
@@ -2701,7 +2702,7 @@ contains
       z_vec1     = linspace(nz,end_pts(3,1),end_pts(3,2))
     else
       r_vec1     = linspace(nr,one,two)
-      theta_vec1 = linspace(nt,-fourth*pi,fourth*pi)
+      theta_vec1 = linspace(nt,zero,half*pi)
       z_vec1     = linspace(nz,zero,one)
     end if
 
@@ -2724,6 +2725,46 @@ contains
     xyz(2,:,:,:) = r_theta_z(1,:,:,:) * sin( r_theta_z(2,:,:,:) )
     xyz(3,:,:,:) = r_theta_z(3,:,:,:)
   end function annulus_mesh
+
+  pure function sphere_mesh(nr,nt,np,end_pts,r_fun,theta_fun,phi_fun) result(xyz)
+    use set_constants, only : zero, one, two, pi, fourth, half, three
+    integer, intent(in) :: nr, nt, np
+    real(dp), dimension(3,2), optional, intent(in) :: end_pts
+    procedure(map_1D_fun), optional :: r_fun, theta_fun, phi_fun
+    real(dp), dimension(3,nr,nt,np) :: r_theta_phi, xyz
+    real(dp), dimension(nr) :: r_vec1, r_vec2
+    real(dp), dimension(nt) :: theta_vec1, theta_vec2
+    real(dp), dimension(np) :: phi_vec1, phi_vec2
+
+    if ( present(end_pts) ) then
+      r_vec1     = linspace(nr,end_pts(1,1),end_pts(1,2))
+      theta_vec1 = linspace(nt,end_pts(2,1),end_pts(2,2))
+      phi_vec1     = linspace(np,end_pts(3,1),end_pts(3,2))
+    else
+      r_vec1     = linspace(nr,one,two)
+      theta_vec1 = linspace(nt,zero,half*pi)
+      phi_vec1   = linspace(np,fourth*pi,three*fourth*pi)
+    end if
+
+    if ( present(r_fun) ) then
+      r_vec2 = r_vec1
+      r_vec1 = r_fun(r_vec2)
+    end if
+
+    if ( present(theta_fun) ) then
+      theta_vec2 = theta_vec1
+      theta_vec1 = theta_fun(theta_vec2)
+    end if
+
+    if ( present(phi_fun) ) then
+      phi_vec2 = phi_vec1
+      phi_vec1 = phi_fun(phi_vec2)
+    end if
+    r_theta_phi = cartesian_mesh_coords(r_vec1,theta_vec1,phi_vec1)
+    xyz(1,:,:,:) = r_theta_phi(1,:,:,:) * cos( r_theta_phi(2,:,:,:) ) * sin( r_theta_phi(3,:,:,:) )
+    xyz(2,:,:,:) = r_theta_phi(1,:,:,:) * sin( r_theta_phi(2,:,:,:) ) * sin( r_theta_phi(3,:,:,:) )
+    xyz(3,:,:,:) = r_theta_phi(1,:,:,:)                               * cos( r_theta_phi(3,:,:,:) )
+  end function sphere_mesh
 
   subroutine perturb_mesh(xyz,delta,include_boundaries)
     use index_conversion, only : in_bound
@@ -3385,7 +3426,7 @@ module interpolant_derived_type
     ! procedure, public, pass   :: map_point_3D
     procedure, public, pass   :: map_point_3D_curve, map_point_3D_surface, map_point_3D_volume
     procedure, public, pass   :: distance_point_2D, distance_point_3D
-    procedure, public, pass   :: min_distance_3D_step
+    procedure, public, pass   :: min_distance_2D_step, min_distance_3D_step
   end type interpolant_t
 
   interface interpolant_t
@@ -3992,8 +4033,6 @@ contains
     real(dp), dimension(2,3), intent(out) :: grad ! [dx/du, dy/du, dz/du; dx/dv, dy/dv, dz/dv]
     real(dp), dimension(3,3), intent(out) :: hess
     integer,  dimension(2) :: Npts
-    real(dp), dimension(2) :: tmp
-    real(dp), dimension(3) :: drdu, drdv
     Npts = shape(X1)
     ! lagbary_2D_whess(this,x,fval,Npts,val,grad,hess)
     call this%lagbary_2D_whess(point,X1,Npts,xyz_eval(1),grad(:,1),hess(:,1) )
@@ -4017,29 +4056,51 @@ contains
     real(dp), dimension(2,2) :: J, Jinv, tmp_eye
     real(dp) :: tmp
     real(dp), dimension(2) :: RHS, delta
+    real(dp), dimension(3) :: x_
 
     call this%distance_point_3D(uv,X1,X2,X3,xyz_point,L2,xyz_eval,grad,hess)
+    x_ = xyz_eval - xyz_point
     dist = sqrt(L2)
     L = dist
-    A  = xyz_eval(1) * grad(1,1) & ! x * x_xi
-       + xyz_eval(2) * grad(1,2) & ! y * y_xi
-       + xyz_eval(3) * grad(1,3)   ! z * z_xi
+    ! A  = x_(1) * grad(1,1) & ! x * x_xi
+    !    + x_(2) * grad(1,2) & ! y * y_xi
+    !    + x_(3) * grad(1,3)   ! z * z_xi
 
-    B    = xyz_eval(1) * grad(2,1) & ! x * x_eta
-         + xyz_eval(2) * grad(2,2) & ! y * y_eta
-         + xyz_eval(3) * grad(2,3)   ! z * z_eta
+    ! B    = x_(1) * grad(2,1) & ! x * x_eta
+    !      + x_(2) * grad(2,2) & ! y * y_eta
+    !      + x_(3) * grad(2,3)   ! z * z_eta
 
-    A1   = xyz_eval(1) * hess(1,1) + grad(1,1)**2 &
-         + xyz_eval(2) * hess(1,2) + grad(1,2)**2 &
-         + xyz_eval(3) * hess(1,3) + grad(1,3)**2
+    ! A1   = x_(1) * hess(1,1) + grad(1,1)**2 &
+    !      + x_(2) * hess(1,2) + grad(1,2)**2 &
+    !      + x_(3) * hess(1,3) + grad(1,3)**2
 
-    AB12 = xyz_eval(1) * hess(2,1) + grad(1,1) * grad(2,1) &
-         + xyz_eval(2) * hess(2,2) + grad(1,2) * grad(2,2) &
-         + xyz_eval(3) * hess(2,3) + grad(1,3) * grad(2,3)
+    ! AB12 = x_(1) * hess(2,1) + grad(1,1) * grad(2,1) &
+    !      + x_(2) * hess(2,2) + grad(1,2) * grad(2,2) &
+    !      + x_(3) * hess(2,3) + grad(1,3) * grad(2,3)
 
-    B2   = xyz_eval(1) * hess(3,1) + grad(2,1)**2 &
-         + xyz_eval(2) * hess(3,2) + grad(2,2)**2 &
-         + xyz_eval(3) * hess(3,3) + grad(2,3)**2
+    ! B2   = x_(1) * hess(3,1) + grad(2,1)**2 &
+    !      + x_(2) * hess(3,2) + grad(2,2)**2 &
+    !      + x_(3) * hess(3,3) + grad(2,3)**2
+
+    A  = x_(1) * grad(1,1) & ! x * x_xi
+       + x_(2) * grad(1,2) & ! y * y_xi
+       + x_(3) * grad(1,3)   ! z * z_xi
+
+    B    = x_(1) * grad(2,1) & ! x * x_eta
+         + x_(2) * grad(2,2) & ! y * y_eta
+         + x_(3) * grad(2,3)   ! z * z_eta
+
+    A1   = x_(1) * hess(1,1) + grad(1,1)**2 &
+         + x_(2) * hess(1,2) + grad(1,2)**2 &
+         + x_(3) * hess(1,3) + grad(1,3)**2
+
+    AB12 = x_(1) * hess(2,1) + grad(1,1) * grad(2,1) &
+         + x_(2) * hess(2,2) + grad(1,2) * grad(2,2) &
+         + x_(3) * hess(2,3) + grad(1,3) * grad(2,3)
+
+    B2   = x_(1) * hess(3,1) + grad(2,1)**2 &
+         + x_(2) * hess(3,2) + grad(2,2)**2 &
+         + x_(3) * hess(3,3) + grad(2,3)**2
 
     J(1,1) = A1*L2 - A**2
     J(2,1) = AB12*L2 - A*B
@@ -4065,6 +4126,8 @@ contains
     tmp_eye = matmul(Jinv,J)
 
     delta = matmul(Jinv,RHS)
+
+    ! uv = max( min(uv - delta,one), -one )
 
     uv = uv - delta
 
@@ -4782,6 +4845,7 @@ module grid_derived_type
     procedure, public, pass :: setup     => allocate_grid_block
     procedure, public, pass :: set_nodes => set_grid_block_nodes
     procedure, public, pass :: get_cell_nodes
+    procedure, public, pass :: get_fg_volume_nodes, get_fg_face_nodes, get_wall_distance_vec
     procedure, public, pass :: destroy   => deallocate_grid_block
   end type grid_block
 
@@ -4835,6 +4899,26 @@ contains
     volume_nodes = get_cell_node_coords_vol( idx, sz, skip, stride, bnd_min, bnd_max, gblock%node_coords )
   end subroutine get_fg_volume_nodes
 
+  pure subroutine get_fg_face_nodes(gblock,idx,shp,dir,face_nodes)
+    class(grid_block),     intent(in)    :: gblock
+    integer, dimension(3), intent(in)    :: idx
+    integer, dimension(2), intent(inout) :: shp
+    integer,               intent(in)    :: dir
+    real(dp), dimension(shp(1),shp(2),3), optional, intent(out) :: face_nodes
+    integer, dimension(4) :: tmp
+    integer, dimension(3) :: bnd_min, bnd_max, sz, skip, stride
+    integer, dimension(2) :: shp2
+    tmp = lbound(gblock%node_coords)
+    bnd_min = tmp(2:4)
+    tmp = ubound(gblock%node_coords)
+    bnd_max = tmp(2:4)
+
+    sz     = gblock%n_skip+1
+    skip   = gblock%n_skip
+    stride = 1
+    call get_cell_node_coords_face( idx, shp, skip, stride, dir, bnd_min, bnd_max, gblock%node_coords, coords_out=face_nodes )
+  end subroutine get_fg_face_nodes
+
   pure function get_cell_node_coords_vol( idx, shp, skip, stride, bnd_min, bnd_max, coords_in )   &
                                                              result(coords_out)
     integer, dimension(3),                            intent(in)  :: idx
@@ -4847,32 +4931,39 @@ contains
                             bnd_min(2):bnd_max(2), &
                             bnd_min(3):bnd_max(3) ), intent(in)  :: coords_in
     real(dp), dimension(shp(1),shp(2),shp(3),3)   :: coords_out
+    real(dp), dimension(shp(1),shp(2),shp(3),3)   :: coords_out_cmp
     integer, dimension(3) :: lo, hi
-    ! integer :: i,j,k,ii,jj,kk
-    ! kk = 0
-    ! do k = idx(3),idx(3)+stride(3)
-    !   kk = kk + 1
-    !   jj = 0
-    !   do j = idx(2),idx(2)+stride(2)
-    !     jj = jj + 1
-    !     ii = 0
-    !     do i = idx(1),idx(1)+stride(1)
-    !       ii = ii + 1
-    !       coords_out(ii,jj,kk,1) = coords_in(1,i,j,k)
-    !       coords_out(ii,jj,kk,2) = coords_in(2,i,j,k)
-    !       coords_out(ii,jj,kk,3) = coords_in(3,i,j,k)
-    !     end do
-    !   end do
-    ! end do
+    integer :: i,j,k,ii,jj,kk
+    kk = 0
+    do k = idx(3),idx(3)+skip(3),stride(3)
+      kk = kk + 1
+      jj = 0
+      do j = idx(2),idx(2)+skip(2),stride(2)
+        jj = jj + 1
+        ii = 0
+        do i = idx(1),idx(1)+skip(1),stride(1)
+          ii = ii + 1
+          coords_out_cmp(ii,jj,kk,1) = coords_in(1,i,j,k)
+          coords_out_cmp(ii,jj,kk,2) = coords_in(2,i,j,k)
+          coords_out_cmp(ii,jj,kk,3) = coords_in(3,i,j,k)
+        end do
+      end do
+    end do
 
     lo = idx
     hi = idx + skip
 
-    coords_out = reshape( coords_in(:,lo(1):stride(1):hi(1),           &
-                                      lo(2):stride(2):hi(2),           &
-                                      lo(3):stride(3):hi(3) ),         &
+    coords_out = reshape( coords_in(:,lo(1):hi(1):stride(1),           &
+                                      lo(2):hi(2):stride(2),           &
+                                      lo(3):hi(3):stride(3) ),         &
                                       shape(coords_out),     &
                                       order=[4,1,2,3] )
+
+                                      
+    kk = 1
+    if ( any( abs( coords_out_cmp-coords_out )>epsilon(1.0_dp) ) ) then
+      kk = 1
+    end if
   end function get_cell_node_coords_vol
 
   pure subroutine get_cell_node_coords_face( idx, shp, skip, stride, dir, bnd_min, bnd_max, coords_in, coords_out, status )
@@ -4923,15 +5014,40 @@ contains
         if ( present(status) ) status = -2
         return
       else
-        coords_out = reshape( pack( coords_in(:,lo(1):stride(1):hi(1),           &
-                                                lo(2):stride(2):hi(2),           &
-                                                lo(3):stride(3):hi(3) ),.true.), &
+        coords_out = reshape( pack( coords_in(:,lo(1):hi(1):stride(1),           &
+                                                lo(2):hi(2):stride(2),           &
+                                                lo(3):hi(3):stride(3) ),.true.), &
                                                 [shp(1),shp(2),3],     &
                                                 order=[3,1,2] )
       end if
     end if
 
   end subroutine get_cell_node_coords_face
+
+  pure function get_wall_distance_vec( gblock, idx, dir, xyz_point, n_iter ) result(out_vec)
+    use set_constants, only : half
+    class(grid_block),                                intent(in)  :: gblock
+    integer, dimension(3),                            intent(in)  :: idx
+    integer,                                          intent(in)  :: dir
+    real(dp), dimension(3),                           intent(in)  :: xyz_point
+    integer,                                          intent(in)  :: n_iter
+    real(dp), dimension(3,n_iter+1) :: out_vec
+    integer, dimension(2) :: shp
+    real(dp), dimension(:,:,:), allocatable :: face_nodes
+    real(dp), dimension(2) :: uv
+    real(dp) :: dist
+    integer :: i
+
+    call gblock%get_fg_face_nodes(idx,shp,dir)
+    allocate( face_nodes(shp(1),shp(2),3) )
+    call gblock%get_fg_face_nodes(idx,shp,dir,face_nodes=face_nodes)
+    uv = half
+    out_vec(:,1) = xyz_point
+    do i = 1, n_iter
+      call gblock%grid_vars%interp%min_distance_3D_step(face_nodes(:,:,1),face_nodes(:,:,2),face_nodes(:,:,3),xyz_point,uv,out_vec(:,i+1),dist)
+    end do
+    deallocate( face_nodes )
+  end function get_wall_distance_vec
 
   ! subroutine coarsen_grid(n_skip,grid,grid_coarse)
   !   integer, dimension(3), intent(in)  :: n_skip
@@ -5011,16 +5127,19 @@ contains
     allocate( this%gblock(n_blocks) )
   end subroutine init_grid_type
 
-  pure subroutine allocate_grid_block( this, n_dim, n_nodes, n_ghost )
+  pure subroutine allocate_grid_block( this, n_dim, n_nodes, n_ghost, n_skip )
     use set_constants, only : zero
     integer,               intent(in)  :: n_dim
     integer, dimension(3), intent(in)  :: n_nodes, n_ghost
+    integer, dimension(3), optional, intent(in) :: n_skip
     class(grid_block),     intent(inout) :: this
     integer, dimension(3) :: lo, hi
     this%n_dim   = n_dim
     this%n_nodes = 1; this%n_nodes(1:n_dim) = n_nodes(1:n_dim)
     this%n_ghost = n_ghost
     this%n_cells = 1; this%n_cells(1:n_dim) = n_nodes(1:n_dim) - 1
+    this%n_skip  = 1
+    if ( present(n_skip) ) this%n_skip(1:n_dim) = n_skip(1:n_dim)
     lo = 1; lo(1:n_dim) = 1 - n_ghost(1:n_dim)
     hi = 1; hi(1:n_dim) = n_nodes(1:n_dim) + n_ghost(1:n_dim)
     allocate( this%node_coords( 3, lo(1):hi(1), lo(2):hi(2), lo(3):hi(3) ) )
@@ -6005,6 +6124,9 @@ module test_problem
   public :: geom_space_wrapper
   public :: make_eval_function, make_grid
   public :: output_grid
+  public :: output_volume_subzone
+  public :: output_face_subzone
+  public :: output_line_subzone
 
   interface setup_grid
     module procedure setup_grid_generate
@@ -6048,26 +6170,26 @@ contains
     end if
   end function geom_space
 
-  subroutine setup_grid_generate( n_dim, n_nodes, n_ghost, grid, delta,        &
+  subroutine setup_grid_generate( n_dim, n_nodes, n_ghost, n_skip, grid, delta,        &
                                   end_pts, x1_map, x2_map, x3_map )
     use grid_derived_type,    only : grid_type
-    use linspace_helper,      only : annulus_mesh, perturb_mesh, map_1D_fun
+    use linspace_helper,      only : sphere_mesh, perturb_mesh, map_1D_fun
     integer, intent(in) :: n_dim
-    integer, dimension(3), intent(in) :: n_nodes, n_ghost
+    integer, dimension(3), intent(in) :: n_nodes, n_ghost, n_skip
     type(grid_type),       intent(out) :: grid
     real(dp), optional,    intent(in)  :: delta
     real(dp), dimension(3,2), optional, intent(in) :: end_pts
     procedure(map_1D_fun), optional    :: x1_map, x2_map, x3_map
 
     call grid%setup(n_dim,1)
-    call grid%gblock(1)%setup(n_dim,n_nodes,n_ghost)
-    call grid%gblock(1)%set_nodes( annulus_mesh(   n_nodes(1),                 &
+    call grid%gblock(1)%setup(n_dim,n_nodes,n_ghost,n_skip=n_skip)
+    call grid%gblock(1)%set_nodes( sphere_mesh(    n_nodes(1),                 &
                                                    n_nodes(2),                 &
                                                    n_nodes(3),                 &
                                                    end_pts=end_pts,            &
                                                    r_fun=x1_map,               &
                                                    theta_fun=x2_map,               &
-                                                   z_fun=x3_map ) )
+                                                   phi_fun=x3_map ) )
     if (present(delta) ) then
       call perturb_mesh( grid%gblock(1)%node_coords, delta )
     end if
@@ -6098,7 +6220,7 @@ contains
   end subroutine make_eval_function
 
   subroutine make_grid( grid )
-    use project_inputs,       only : n_dim, n_nodes, n_ghost, grid_perturb
+    use project_inputs,       only : n_dim, n_nodes, n_ghost, n_skip, grid_perturb
     use grid_derived_type,    only : grid_type
     use grid_local,           only : grid_l => grid
 
@@ -6111,10 +6233,10 @@ contains
     integer :: status
     call Q%create(n_dim,out_quad_order,include_ends=.true.,status=status)
 
-    call setup_grid( n_dim, n_nodes, n_ghost, grid, delta=grid_perturb, x1_map=geom_space_wrapper )
+    call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid, delta=grid_perturb, x1_map=geom_space_wrapper )
 
     ! copy of grid saved in a module to help with debugging
-    call setup_grid( n_dim, n_nodes, n_ghost, grid_l, delta=grid_perturb, x1_map=geom_space_wrapper )
+    call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid_l, delta=grid_perturb, x1_map=geom_space_wrapper )
   end subroutine make_grid
 
   subroutine output_gblock( grid, blk, file_name, old, strand_id, solution_time )
@@ -6146,7 +6268,7 @@ contains
     n_cell_vars = 0
     n_vars      = n_node_vars + n_cell_vars
 
-    n_nodes     = grid%gblock(blk)%n_nodes
+    n_nodes     = ( grid%gblock(blk)%n_nodes - 1 )/grid%gblock(1)%n_skip + 1
 
     allocate( var_names( n_vars ) )
     allocate( NODE_DATA( n_node_vars, product(n_nodes) ) )
@@ -6168,9 +6290,9 @@ contains
     hi(3) = ubound( grid%gblock(blk)%node_coords,dim=4)
     
     cnt = 0
-    do k = lo(3),hi(3)
-      do j = lo(2),hi(2)
-        do i = lo(1),hi(1)
+    do k = lo(3),hi(3),grid%gblock(blk)%n_skip(3)
+      do j = lo(2),hi(2),grid%gblock(blk)%n_skip(2)
+        do i = lo(1),hi(1),grid%gblock(blk)%n_skip(1)
           cnt = cnt + 1
           NODE_DATA( 1:n_dim, cnt ) = grid%gblock(blk)%node_coords(1:n_dim,i,j,k)
         end do
@@ -6204,6 +6326,248 @@ contains
     deallocate( var_names, NODE_DATA )
   end subroutine output_gblock
 
+  subroutine output_volume_subzone( n_dim, volume_nodes, file_name, old, strand_id, solution_time )
+    use tecplot_output, only : write_tecplot_ordered_zone_header
+    use tecplot_output, only : write_tecplot_ordered_zone_block_packed
+    integer,                         intent(in)    :: n_dim
+    real(dp), dimension(:,:,:,:),    intent(in)    :: volume_nodes
+    character(*),                    intent(in)    :: file_name
+    logical,                         intent(inout) :: old
+    integer,               optional, intent(in)    :: strand_id
+    real(dp),              optional, intent(in)    :: solution_time
+    integer,  dimension(n_dim) :: n_nodes
+    integer :: lin_idx
+    real(dp), dimension(0,0) :: CELL_DATA
+    real(dp), dimension(:,:), allocatable :: NODE_DATA
+    character(*), dimension(3), parameter :: xyz        = ['x','y','z']
+    character(100), dimension(:), allocatable :: var_names
+    character(100) :: zone_name, tmp_name
+    integer, dimension(4) :: tmp
+    integer, dimension(3) :: lo,hi
+
+    integer :: n_vars, n_node_vars, n_cell_vars
+    integer :: fid, cnt, i, j, k
+    logical :: file_exists
+
+    n_node_vars = n_dim
+    n_cell_vars = 0
+    n_vars      = n_node_vars + n_cell_vars
+
+    tmp = lbound(volume_nodes)
+    lo  = tmp(1:3)
+    tmp = ubound(volume_nodes)
+    hi  = tmp(1:3)
+    n_nodes = hi - lo + 1
+
+    allocate( var_names( n_vars ) )
+    allocate( NODE_DATA( n_node_vars, product(n_nodes) ) )
+
+    write(zone_name,'(A)') "'SUBZONE'"
+
+    ! if (n_dim==1) then
+    !   write(zone_name,'(A)') "('CELL:(',I0,',[',I0,'])')"
+    ! else
+    !   write(zone_name,'(A,I0,A)') "('CELL:(',I0,',[',I0,",n_dim-1,"(',',I0),'])')"
+    ! end if
+    ! write(zone_name,trim(zone_name)) blk, cell_idx(1:n_dim)
+
+    cnt = 0
+    do i = 1,n_dim
+      cnt = cnt + 1
+      var_names(cnt) = xyz(i)
+    end do
+    
+    cnt = 0
+    do k = lo(3),hi(3)
+      do j = lo(2),hi(2)
+        do i = lo(1),hi(1)
+          cnt = cnt + 1
+          NODE_DATA( 1:n_dim, cnt ) = volume_nodes(i,j,k,1:n_dim)
+        end do
+      end do
+    end do
+    
+    inquire( file=trim(file_name), exist=file_exists )
+    if ( file_exists ) then
+      if (.not.old) then
+        open( newunit=fid, file=trim(file_name), status='unknown')
+      else
+        open( newunit=fid, file=trim(file_name), status='old',                 &
+                                                 position='append' )
+      end if
+    else
+      open( newunit=fid, file=trim(file_name), status='unknown')
+    end if
+    old = .true.
+
+    call write_tecplot_ordered_zone_header( fid, n_dim, n_nodes,               &
+                                           n_node_vars, n_cell_vars,           &
+                                           zone_name=zone_name,                &
+                                           var_names=var_names,                &
+                                           data_packing='block',               &
+                                           solution_time=solution_time,        &
+                                           strand_id=strand_id )
+    call write_tecplot_ordered_zone_block_packed( fid, n_nodes,                &
+                                                  n_node_vars, n_cell_vars,    &
+                                                  NODE_DATA, CELL_DATA )
+    close(fid)
+    deallocate( var_names, NODE_DATA )
+  end subroutine output_volume_subzone
+
+  subroutine output_face_subzone( n_dim, face_nodes, file_name, old, strand_id, solution_time )
+    use tecplot_output, only : write_tecplot_ordered_zone_header
+    use tecplot_output, only : write_tecplot_ordered_zone_block_packed
+    integer,                         intent(in)    :: n_dim
+    real(dp), dimension(:,:,:),      intent(in)    :: face_nodes
+    character(*),                    intent(in)    :: file_name
+    logical,                         intent(inout) :: old
+    integer,               optional, intent(in)    :: strand_id
+    real(dp),              optional, intent(in)    :: solution_time
+    integer,  dimension(n_dim-1) :: n_nodes
+    integer :: lin_idx
+    real(dp), dimension(0,0) :: CELL_DATA
+    real(dp), dimension(:,:), allocatable :: NODE_DATA
+    character(*), dimension(3), parameter :: xyz        = ['x','y','z']
+    character(100), dimension(:), allocatable :: var_names
+    character(100) :: zone_name, tmp_name
+    integer, dimension(3) :: tmp
+    integer, dimension(2) :: lo,hi
+
+    integer :: n_vars, n_node_vars, n_cell_vars
+    integer :: fid, cnt, i, j, k
+    logical :: file_exists
+
+    n_node_vars = n_dim
+    n_cell_vars = 0
+    n_vars      = n_node_vars + n_cell_vars
+
+    tmp = lbound(face_nodes)
+    lo  = tmp(1:2)
+    tmp = ubound(face_nodes)
+    hi  = tmp(1:2)
+    n_nodes = hi - lo + 1
+
+    allocate( var_names( n_vars ) )
+    allocate( NODE_DATA( n_node_vars, product(n_nodes) ) )
+
+    write(zone_name,'(A)') "'SUBZONE'"
+
+    cnt = 0
+    do i = 1,n_dim
+      cnt = cnt + 1
+      var_names(cnt) = xyz(i)
+    end do
+    
+    cnt = 0
+    do j = lo(2),hi(2)
+      do i = lo(1),hi(1)
+        cnt = cnt + 1
+        NODE_DATA( 1:n_dim, cnt ) = face_nodes(i,j,1:n_dim)
+      end do
+    end do
+    
+    inquire( file=trim(file_name), exist=file_exists )
+    if ( file_exists ) then
+      if (.not.old) then
+        open( newunit=fid, file=trim(file_name), status='unknown')
+      else
+        open( newunit=fid, file=trim(file_name), status='old',                 &
+                                                 position='append' )
+      end if
+    else
+      open( newunit=fid, file=trim(file_name), status='unknown')
+    end if
+    old = .true.
+
+    call write_tecplot_ordered_zone_header( fid, n_dim-1, n_nodes,               &
+                                           n_node_vars, n_cell_vars,           &
+                                           zone_name=zone_name,                &
+                                           var_names=var_names,                &
+                                           data_packing='block',               &
+                                           solution_time=solution_time,        &
+                                           strand_id=strand_id )
+    call write_tecplot_ordered_zone_block_packed( fid, n_nodes,                &
+                                                  n_node_vars, n_cell_vars,    &
+                                                  NODE_DATA, CELL_DATA )
+    close(fid)
+    deallocate( var_names, NODE_DATA )
+  end subroutine output_face_subzone
+
+  subroutine output_line_subzone( n_dim, nodes, file_name, old, strand_id, solution_time )
+    use tecplot_output, only : write_tecplot_ordered_zone_header
+    use tecplot_output, only : write_tecplot_ordered_zone_block_packed
+    integer,                         intent(in)    :: n_dim
+    real(dp), dimension(:,:),        intent(in)    :: nodes
+    character(*),                    intent(in)    :: file_name
+    logical,                         intent(inout) :: old
+    integer,               optional, intent(in)    :: strand_id
+    real(dp),              optional, intent(in)    :: solution_time
+    integer,  dimension(1) :: n_nodes
+    integer :: lin_idx
+    real(dp), dimension(0,0) :: CELL_DATA
+    real(dp), dimension(:,:), allocatable :: NODE_DATA
+    character(*), dimension(3), parameter :: xyz        = ['x','y','z']
+    character(100), dimension(:), allocatable :: var_names
+    character(100) :: zone_name, tmp_name
+    integer :: lo,hi
+
+    integer :: n_vars, n_node_vars, n_cell_vars
+    integer :: fid, cnt, i, j, k
+    logical :: file_exists
+
+    n_node_vars = n_dim
+    n_cell_vars = 0
+    n_vars      = n_node_vars + n_cell_vars
+
+    lo = lbound(nodes,2)
+    hi = ubound(nodes,2)
+    n_nodes(1) = hi - lo + 1
+
+    allocate( var_names( n_vars ) )
+    allocate( NODE_DATA( n_node_vars, product(n_nodes) ) )
+
+    write(zone_name,'(A)') "'SUBZONE'"
+
+    cnt = 0
+    do i = 1,n_dim
+      cnt = cnt + 1
+      var_names(cnt) = xyz(i)
+    end do
+    
+    cnt = 0
+    do i = lo,hi
+      cnt = cnt + 1
+      ! NODE_DATA( 1:n_dim, cnt ) = nodes(i,1:n_dim)
+      NODE_DATA( 1:n_dim, cnt ) = nodes(1:n_dim,i)
+    end do
+    
+    inquire( file=trim(file_name), exist=file_exists )
+    if ( file_exists ) then
+      if (.not.old) then
+        open( newunit=fid, file=trim(file_name), status='unknown')
+      else
+        open( newunit=fid, file=trim(file_name), status='old',                 &
+                                                 position='append' )
+      end if
+    else
+      open( newunit=fid, file=trim(file_name), status='unknown')
+    end if
+    old = .true.
+
+    call write_tecplot_ordered_zone_header( fid, 1, n_nodes,               &
+                                           n_node_vars, n_cell_vars,           &
+                                           zone_name=zone_name,                &
+                                           var_names=var_names,                &
+                                           data_packing='block',               &
+                                           solution_time=solution_time,        &
+                                           strand_id=strand_id )
+    call write_tecplot_ordered_zone_block_packed( fid, n_nodes,                &
+                                                  n_node_vars, n_cell_vars,    &
+                                                  NODE_DATA, CELL_DATA )
+    close(fid)
+    deallocate( var_names, NODE_DATA )
+  end subroutine output_line_subzone
+
   subroutine output_grid( grid, file_name, strand_id, solution_time )
     use grid_derived_type,          only : grid_type
     type(grid_type),                 intent(in)    :: grid
@@ -6224,29 +6588,97 @@ end module test_problem
 
 program main
   use set_precision, only : dp
-  use set_constants, only : zero, one
-  use test_problem,  only : setup_grid, geom_space_wrapper, output_grid
+  use set_constants, only : zero, one, three, pi
+  use test_problem,  only : setup_grid, geom_space_wrapper, output_grid, output_volume_subzone, output_face_subzone, output_line_subzone
   use grid_derived_type, only : grid_type
   use timer_derived_type, only : basic_timer_t
+  use project_inputs, only : n_dim, n_nodes, n_ghost, n_skip
 
   implicit none
 
   type(grid_type) :: grid
   type(basic_timer_t) :: timer
-  integer :: degree, n_vars, n_dim
-  integer, dimension(3) :: n_nodes, n_ghost, n_skip
   integer :: i
-
-  degree  = 2
-  n_vars  = 1
+  real(dp), dimension(:,:,:,:), allocatable :: volume_nodes
+  real(dp), dimension(:,:,:),   allocatable :: face_nodes
+  real(dp), dimension(:,:),     allocatable :: out_vec
+  real(dp), dimension(3) :: pt
+  integer, dimension(3) :: cell_idx
+  integer, dimension(2) :: shp
+  integer :: dir, n_iter
+  logical :: old
   n_dim   = 3
   n_nodes = [17,17,9]
   n_ghost = [0,0,0]
   n_skip  = [2,2,2]
+
+  cell_idx = [1,1,2]
+  n_iter   = 10
   
-  call setup_grid( n_dim, n_nodes, n_ghost, grid )
+  call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
 
   call output_grid( grid, 'TEST_GRID' )
+
+  allocate( volume_nodes( grid%gblock(1)%n_skip(1)+1, &
+                          grid%gblock(1)%n_skip(2)+1, &
+                          grid%gblock(1)%n_skip(3)+1, &
+                          3 ) )
+  
+  call grid%gblock(1)%get_fg_volume_nodes(cell_idx,volume_nodes)
+
+  old = .true.
+  call output_volume_subzone(n_dim,volume_nodes,'TEST_GRID',old)
+
+  deallocate( volume_nodes )
+
+  dir = -1
+  call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+  allocate( face_nodes(shp(1),shp(2),3) )
+  call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
+  deallocate( face_nodes )
+
+  pt = [three*cos(pi/32.0_dp),three*sin(pi/32.0_dp),one]
+  allocate(out_vec(3,n_iter+1))
+  out_vec = grid%gblock(1)%get_wall_distance_vec(cell_idx,dir,pt,n_iter)
+  call output_line_subzone(n_dim,out_vec,'TEST_GRID',old)
+  deallocate( out_vec )
+  ! dir = 1
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+  ! allocate( face_nodes(shp(1),shp(2),3) )
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
+  ! deallocate( face_nodes )
+
+  ! dir = -2
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+  ! allocate( face_nodes(shp(1),shp(2),3) )
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
+  ! deallocate( face_nodes )
+
+  ! dir = 2
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+  ! allocate( face_nodes(shp(1),shp(2),3) )
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
+  ! deallocate( face_nodes )
+
+  ! dir = -3
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+  ! allocate( face_nodes(shp(1),shp(2),3) )
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
+  ! deallocate( face_nodes )
+
+  ! dir = 3
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+  ! allocate( face_nodes(shp(1),shp(2),3) )
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
+  ! deallocate( face_nodes )
+
+  
 
   call grid%destroy()
 end program main
