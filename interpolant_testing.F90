@@ -3433,6 +3433,23 @@ module interpolant_derived_type
     procedure constructor
   end interface interpolant_t
 
+  interface pt_interp
+    module procedure curv_pt_interp
+    module procedure surf_pt_interp
+    module procedure volm_pt_interp
+  end interface pt_interp
+
+  interface pt_diff
+    module procedure curv_pt_diff
+    module procedure surf_pt_diff
+    module procedure volm_pt_diff
+  end interface pt_diff
+
+  interface min_dist_pt
+    module procedure min_dist_pt_curv
+    module procedure min_dist_pt_surf
+    module procedure min_dist_pt_volm
+  end interface min_dist_pt
 contains
 
   pure elemental subroutine destroy_interpolant(this)
@@ -3986,10 +4003,291 @@ contains
     dS = det_3x3(A)
   end subroutine map_point_3D_volume
 
+  pure function curv_pt_interp(this,X1,X2,X3,pt) result(xyz)
+    type(interpolant_t),   intent(in) :: this
+    real(dp), dimension(:), intent(in) :: X1, X2, X3
+    real(dp),               intent(in) :: pt
+    real(dp), dimension(3)             :: xyz
+    integer,  dimension(1) :: Npts
+    Npts = shape(X1)
+    call this%lagbary(pt,1,X1,Npts,xyz(1))
+    call this%lagbary(pt,1,X2,Npts,xyz(2))
+    call this%lagbary(pt,1,X3,Npts,xyz(3))
+  end function curv_pt_interp
 
-    pure subroutine min_distance_2D_step(this,X1,X2,X3,xyz_point,t,xyz_eval,dist)
+  pure function surf_pt_interp(this,X1,X2,X3,pt) result(xyz)
+    type(interpolant_t),      intent(in) :: this
+    real(dp), dimension(:,:), intent(in) :: X1, X2, X3
+    real(dp), dimension(2),   intent(in) :: pt
+    real(dp), dimension(3)               :: xyz
+    integer,  dimension(2) :: Npts
+    Npts = shape(X1)
+    call this%lagbary_2D(pt,X1,Npts,xyz(1))
+    call this%lagbary_2D(pt,X2,Npts,xyz(2))
+    call this%lagbary_2D(pt,X3,Npts,xyz(3))
+  end function surf_pt_interp
+
+  pure function volm_pt_interp(this,X1,X2,X3,pt) result(xyz)
+    type(interpolant_t),        intent(in) :: this
+    real(dp), dimension(:,:,:), intent(in) :: X1, X2, X3
+    real(dp), dimension(3),     intent(in) :: pt
+    real(dp), dimension(3)                 :: xyz
+    integer, dimension(3) :: Npts
+    Npts = shape(X1)
+    call this%lagbary_3D(pt,X1,Npts,xyz(1))
+    call this%lagbary_3D(pt,X2,Npts,xyz(2))
+    call this%lagbary_3D(pt,X3,Npts,xyz(3))
+  end function volm_pt_interp
+
+  pure subroutine curv_pt_diff(this,X1,X2,X3,pt,xyz,grad,hess)
+    type(interpolant_t),    intent(in)  :: this 
+    real(dp), dimension(:), intent(in)  :: X1, X2, X3
+    real(dp),               intent(in)  :: pt
+    real(dp), dimension(3), intent(out) :: xyz
+    real(dp), dimension(3), intent(out) :: grad
+    real(dp), dimension(3), intent(out) :: hess
+    integer,  dimension(1) :: Npts
+    Npts = shape(X1)
+    call this%lagbary_wderiv2(pt,1,X1,Npts,xyz(1),grad(1),hess(1) )
+    call this%lagbary_wderiv2(pt,1,X2,Npts,xyz(2),grad(2),hess(2) )
+    call this%lagbary_wderiv2(pt,1,X3,Npts,xyz(3),grad(3),hess(3) )
+  end subroutine curv_pt_diff
+
+  pure subroutine surf_pt_diff(this,X1,X2,X3,pt,xyz,grad,hess)
+    type(interpolant_t),        intent(in)  :: this 
+    real(dp), dimension(:,:),   intent(in)  :: X1, X2, X3
+    real(dp), dimension(2),     intent(in)  :: pt
+    real(dp), dimension(3),     intent(out) :: xyz
+    real(dp), dimension(2,3),   intent(out) :: grad
+    real(dp), dimension(3,3),   intent(out) :: hess
+    integer,  dimension(2) :: Npts
+    Npts = shape(X1)
+    call this%lagbary_2D_whess(pt,X1,Npts,xyz(1),grad(:,1),hess(:,1) )
+    call this%lagbary_2D_whess(pt,X2,Npts,xyz(2),grad(:,2),hess(:,2) )
+    call this%lagbary_2D_whess(pt,X3,Npts,xyz(3),grad(:,3),hess(:,3) )
+  end subroutine surf_pt_diff
+
+  pure subroutine volm_pt_diff(this,X1,X2,X3,pt,xyz,grad,hess)
+    type(interpolant_t),        intent(in)  :: this 
+    real(dp), dimension(:,:,:), intent(in)  :: X1, X2, X3
+    real(dp), dimension(3),     intent(in)  :: pt
+    real(dp), dimension(3),     intent(out) :: xyz
+    real(dp), dimension(3,3),   intent(out) :: grad
+    real(dp), dimension(6,3),   intent(out) :: hess
+    integer,  dimension(3) :: Npts
+    Npts = shape(X1)
+    call this%lagbary_3D_whess(pt,X1,Npts,xyz(1),grad(:,1),hess(:,1) )
+    call this%lagbary_3D_whess(pt,X2,Npts,xyz(2),grad(:,2),hess(:,2) )
+    call this%lagbary_3D_whess(pt,X3,Npts,xyz(3),grad(:,3),hess(:,3) )
+  end subroutine volm_pt_diff
+
+  pure subroutine curv_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+    type(interpolant_t),      intent(in)  :: this
+    real(dp), dimension(:), intent(in)  :: X1, X2, X3
+    real(dp),               intent(in)  :: pt
+    real(dp), dimension(3), intent(in)  :: xyz_pt
+    real(dp),               intent(out) :: fval
+    real(dp),               intent(out) :: dfval
+    real(dp),               intent(out) :: d2fval
+    real(dp), dimension(3) :: grad
+    real(dp), dimension(3) :: hess
+    real(dp) :: L, A, A11
+    real(dp), dimension(3) :: x_
+
+    call curv_pt_diff(this,X1,X2,X3,pt,x_,grad,hess)
+    x_ = x_ - xyz_pt
+    fval = norm2(x_)
+    L    = fval
+    A    = x_(1) * grad(1) + x_(2) * grad(2) + x_(3) * grad(3)
+
+    dfval = A / L
+
+    A11  = x_(1) * hess(1) + grad(1) * grad(1) &
+         + x_(2) * hess(2) + grad(2) * grad(2) &
+         + x_(3) * hess(3) + grad(3) * grad(3)
+
+    d2fval = A11*L*L - A*A
+    d2fval = d2fval/(L*L*L)
+
+  end subroutine curv_pt_dist_fun
+
+  pure subroutine surf_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+    type(interpolant_t),      intent(in)  :: this
+    real(dp), dimension(:,:), intent(in)  :: X1, X2, X3
+    real(dp), dimension(2),   intent(in)  :: pt
+    real(dp), dimension(3),   intent(in)  :: xyz_pt
+    real(dp),                 intent(out) :: fval
+    real(dp), dimension(2),   intent(out) :: dfval
+    real(dp), dimension(2,2), intent(out) :: d2fval
+    real(dp), dimension(2,3) :: grad
+    real(dp), dimension(3,3) :: hess
+    real(dp) :: L, A11, A22, A12
+    real(dp), dimension(3) :: x_
+    real(dp), dimension(2) :: A
+
+    call surf_pt_diff(this,X1,X2,X3,pt,x_,grad,hess)
+    x_ = x_ - xyz_pt
+    fval = norm2(x_)
+    L    = fval
+    A(1) = x_(1) * grad(1,1) + x_(2) * grad(1,2) + x_(3) * grad(1,3)
+    A(2) = x_(1) * grad(2,1) + x_(2) * grad(2,2) + x_(3) * grad(2,3)
+
+    dfval = A / L
+
+    A11  = x_(1) * hess(1,1) + grad(1,1) * grad(1,1) &
+         + x_(2) * hess(1,2) + grad(1,2) * grad(1,2) &
+         + x_(3) * hess(1,3) + grad(1,3) * grad(1,3)
+    A22  = x_(1) * hess(2,1) + grad(2,1) * grad(2,1) &
+         + x_(2) * hess(2,2) + grad(2,2) * grad(2,2) &
+         + x_(3) * hess(2,3) + grad(2,3) * grad(2,3)
+    A12  = x_(1) * hess(3,1) + grad(1,1) * grad(2,1) &
+         + x_(2) * hess(3,2) + grad(1,2) * grad(2,2) &
+         + x_(3) * hess(3,3) + grad(1,3) * grad(2,3)
+
+    d2fval(1,1) = A11*L*L - A(1)*A(1)
+    d2fval(2,1) = A12*L*L - A(1)*A(2)
+    d2fval(1,2) = d2fval(2,1)
+    d2fval(2,2) = A22*L*L - A(2)*A(2)
+
+    d2fval = d2fval/(L*L*L)
+
+  end subroutine surf_pt_dist_fun
+
+
+  pure subroutine volm_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+    type(interpolant_t),        intent(in)  :: this
+    real(dp), dimension(:,:,:), intent(in)  :: X1, X2, X3
+    real(dp), dimension(3),     intent(in)  :: pt
+    real(dp), dimension(3),     intent(in)  :: xyz_pt
+    real(dp),                   intent(out) :: fval
+    real(dp), dimension(3),     intent(out) :: dfval
+    real(dp), dimension(3,3),   intent(out) :: d2fval
+    real(dp), dimension(3,3) :: grad
+    real(dp), dimension(6,3) :: hess
+    real(dp) :: L, L2, A11, A22, A33, A12, A13, A23
+    real(dp), dimension(3) :: x_, A
+
+    call volm_pt_diff(this,X1,X2,X3,pt,x_,grad,hess)
+    x_ = x_ - xyz_pt
+    fval = norm2(x_)
+    L    = fval
+    L2   = L*L
+    A(1) = x_(1) * grad(1,1) + x_(2) * grad(1,2) + x_(3) * grad(1,3)
+    A(2) = x_(1) * grad(2,1) + x_(2) * grad(2,2) + x_(3) * grad(2,3)
+    A(3) = x_(1) * grad(3,1) + x_(2) * grad(3,2) + x_(3) * grad(3,3)
+
+    dfval = A / L
+
+    A11  = x_(1) * hess(1,1) + grad(1,1) * grad(1,1) &
+         + x_(2) * hess(1,2) + grad(1,2) * grad(1,2) &
+         + x_(3) * hess(1,3) + grad(1,3) * grad(1,3)
+    A22  = x_(1) * hess(2,1) + grad(2,1) * grad(2,1) &
+         + x_(2) * hess(2,2) + grad(2,2) * grad(2,2) &
+         + x_(3) * hess(2,3) + grad(2,3) * grad(2,3)
+    A33  = x_(1) * hess(3,1) + grad(3,1) * grad(3,1) &
+         + x_(2) * hess(3,2) + grad(3,2) * grad(3,2) &
+         + x_(3) * hess(3,3) + grad(3,3) * grad(3,3)
+    A12  = x_(1) * hess(4,1) + grad(1,1) * grad(2,1) &
+         + x_(2) * hess(4,2) + grad(1,2) * grad(2,2) &
+         + x_(3) * hess(4,3) + grad(1,3) * grad(2,3)
+    A13  = x_(1) * hess(5,1) + grad(1,1) * grad(3,1) &
+         + x_(2) * hess(5,2) + grad(1,2) * grad(3,2) &
+         + x_(3) * hess(5,3) + grad(1,3) * grad(3,3)
+    A23  = x_(1) * hess(6,1) + grad(2,1) * grad(3,1) &
+         + x_(2) * hess(6,2) + grad(2,2) * grad(3,2) &
+         + x_(3) * hess(6,3) + grad(2,3) * grad(3,3)
+    d2fval(1,1) = A11*L2 - A(1)*A(1)
+    d2fval(2,1) = A12*L2 - A(1)*A(2)
+    d2fval(3,1) = A13*L2 - A(1)*A(3)
+    d2fval(1,2) = d2fval(2,1)
+    d2fval(2,2) = A22*L2 - A(2)*A(2)
+    d2fval(3,2) = A23*L2 - A(2)*A(3)
+    d2fval(1,3) = d2fval(3,1)
+    d2fval(2,3) = d2fval(3,2)
+    d2fval(3,3) = A33*L2 - A(3)*A(3)
+
+    d2fval = d2fval/(L**3)
+
+  end subroutine volm_pt_dist_fun
+
+  pure subroutine fminunc_1D( max_iter, iter, fk, dfk, d2fk, c1, gamma, fkp1, eta, dk )
+    use set_constants, only : one
+    integer,  intent(in)    :: max_iter
+    integer,  intent(inout) :: iter
+    real(dp), intent(in)    :: fk, dfk, d2fk, c1, gamma
+    real(dp), intent(out)   :: fkp1, eta, dk
+
+    eta = one
+    dk = -d2fk/dfk
+    fkp1 = fk + eta*dk
+    do while ( fk-fkp1 > c1*eta*abs(dk) )
+      eta = gamma*eta
+      fkp1 = fk + eta*dk
+    end do
+    iter = iter + 1
+  end subroutine fminunc_1D
+
+  pure subroutine min_dist_pt_curv(this,X1,X2,X3,xyz_pt,pt,dist,xyz_eval)
+    type(interpolant_t),    intent(in)    :: this
+    real(dp), dimension(:), intent(in)    :: X1, X2, X3
+    real(dp), dimension(3), intent(in)    :: xyz_pt
+    real(dp),               intent(inout) :: pt
+    real(dp),               intent(inout) :: dist
+    real(dp), dimension(3), intent(out)   :: xyz_eval
+    real(dp) :: fval, dfval, d2fval
+
+    fval = dist
+    xyz_eval = curv_pt_interp(this,X1,X2,X3,pt)
+    fval = norm2( xyz_eval - xyz_pt )
+    dist = fval
+    call curv_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+  end subroutine min_dist_pt_curv
+
+  pure subroutine min_dist_pt_surf(this,X1,X2,X3,xyz_pt,pt,dist,xyz_eval)
+    type(interpolant_t),    intent(in)    :: this
+    real(dp), dimension(:,:), intent(in)    :: X1, X2, X3
+    real(dp), dimension(3), intent(in)    :: xyz_pt
+    real(dp), dimension(2), intent(inout) :: pt
+    real(dp),               intent(inout) :: dist
+    real(dp), dimension(3), intent(out)   :: xyz_eval
+    real(dp) :: fval
+    real(dp), dimension(2)   :: dfval
+    real(dp), dimension(2,2) :: d2fval
+
+    fval = dist
+
+    xyz_eval = surf_pt_interp(this,X1,X2,X3,pt)
+    fval = norm2( xyz_eval - xyz_pt )
+    call surf_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+
+    dist = fval
+  end subroutine min_dist_pt_surf
+
+  pure subroutine min_dist_pt_volm(this,X1,X2,X3,xyz_pt,pt,dist,xyz_eval)
+    type(interpolant_t),    intent(in)    :: this
+    real(dp), dimension(:,:,:), intent(in)    :: X1, X2, X3
+    real(dp), dimension(3), intent(in)    :: xyz_pt
+    real(dp), dimension(3), intent(inout) :: pt
+    real(dp),               intent(inout) :: dist
+    real(dp), dimension(3), intent(out)   :: xyz_eval
+    real(dp) :: fval
+    real(dp), dimension(3)   :: dfval
+    real(dp), dimension(3,3) :: d2fval
+
+    fval = dist
+
+    xyz_eval = volm_pt_interp(this,X1,X2,X3,pt)
+    fval = norm2( xyz_eval - xyz_pt )
+    call volm_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+
+    dist = fval
+  end subroutine min_dist_pt_volm
+
+
+
+
+  pure subroutine min_distance_2D_step(this,X1,X2,X3,xyz_point,t,xyz_eval,dist)
     class(interpolant_t),   intent(in)  :: this
-    
     real(dp), dimension(:), intent(in)    :: X1, X2, X3
     real(dp), dimension(3), intent(in)    :: xyz_point
     real(dp),               intent(inout) :: t ! [t]
@@ -4002,7 +4300,6 @@ contains
 
     call this%distance_point_2D([t],X1,X2,X3,xyz_point,dist,xyz_eval,grad,hess)
     
-
   end subroutine min_distance_2D_step
 
   pure subroutine distance_point_2D(this,point,X1,X2,X3,xyz_point,dist2,xyz_eval,grad,hess)
