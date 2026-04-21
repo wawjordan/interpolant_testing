@@ -2182,8 +2182,10 @@ module math
   use set_precision, only : dp
   implicit none
   private
-  public :: cross_product, det_3x3, vector_norm
-  public :: LUdecomp, LUsolve, mat_inv
+  public :: cross_product, vector_norm
+  public :: LUdecomp, LUsolve, det_2x2, det_3x3
+  public :: mat_inv_2x2, mat_inv_3x3
+  public :: linear_solve, mat_inv
   public :: LegendrePolynomialAndDerivative, LegendreGaussNodesAndWeights
   public :: maximal_extents
   public :: rand_int_in_range
@@ -2223,11 +2225,215 @@ contains
   pure function det_3x3( mat )
     real(dp), dimension(3,3), intent(in) :: mat
     real(dp)                             :: det_3x3
-    continue
     det_3x3 = mat(1,1)*(mat(2,2)*mat(3,3)-mat(2,3)*mat(3,2)) &
             - mat(1,2)*(mat(2,1)*mat(3,3)-mat(2,3)*mat(3,1)) &
             + mat(1,3)*(mat(2,1)*mat(3,2)-mat(2,2)*mat(3,1))
   end function det_3x3
+
+  pure function det_2x2( mat )
+    real(dp), dimension(2,2), intent(in) :: mat
+    real(dp)                             :: det_2x2
+    continue
+    det_2x2 = mat(1,1)*mat(2,2) - mat(1,2)*mat(2,1)
+  end function det_2x2
+
+  pure subroutine mat_inv_1x1( mat, inv, status )
+    use set_constants, only : zero, near_zero
+    real(dp), dimension(1,1), intent(in)  :: mat
+    real(dp), dimension(1,1), intent(out) :: inv
+    integer,  optional,       intent(out) :: status
+    real(dp) :: det
+
+    if (present(status)) status = 0
+    inv(1,1) =  mat(1,1)
+
+    det = mat(1,1)
+
+    if ( abs(det) > zero ) then
+      inv = inv/det
+    end if
+
+    if ( present(status) ) then
+      if (abs(det) <= near_zero ) status = -1
+    end if
+
+  end subroutine mat_inv_1x1
+
+  pure subroutine mat_inv_2x2( mat, inv, status )
+    use set_constants, only : zero, near_zero
+    real(dp), dimension(2,2), intent(in)  :: mat
+    real(dp), dimension(2,2), intent(out) :: inv
+    integer,  optional,       intent(out) :: status
+    real(dp) :: det
+
+    if (present(status)) status = 0
+    inv      = zero
+    inv(1,1) =  mat(2,2)
+    inv(2,1) = -mat(2,1)
+    inv(1,2) = -mat(1,2)
+    inv(2,2) =  mat(1,1)
+
+    det = ( mat(1,1) * mat(2,2) - mat(1,2)*mat(2,1) )
+
+    if ( abs(det) > zero ) then
+      inv = inv/det
+    end if
+
+    if ( present(status) ) then
+      if (abs(det) <= near_zero ) status = -1
+    end if
+
+  end subroutine mat_inv_2x2
+
+  pure subroutine mat_inv_3x3( mat, inv, status )
+
+    use set_constants, only : zero, near_zero
+
+    real(dp), dimension(3,3), intent(in)  :: mat
+    real(dp), dimension(3,3), intent(out) :: inv
+    integer,  optional,       intent(out) :: status
+    real(dp) :: det
+    if (present(status)) status = 0
+
+    inv(1,1) = mat(2,2)*mat(3,3)-mat(2,3)*mat(3,2)
+    inv(2,1) = mat(2,3)*mat(3,1)-mat(2,1)*mat(3,3)
+    inv(3,1) = mat(2,1)*mat(3,2)-mat(2,2)*mat(3,1)
+
+    inv(1,2) = mat(1,3)*mat(3,2)-mat(1,2)*mat(3,3)
+    inv(2,2) = mat(1,1)*mat(3,3)-mat(1,3)*mat(3,1)
+    inv(3,2) = mat(1,2)*mat(3,1)-mat(1,1)*mat(3,2)
+
+    inv(1,3) = mat(1,2)*mat(2,3)-mat(1,3)*mat(2,2)
+    inv(2,3) = mat(1,3)*mat(2,1)-mat(1,1)*mat(2,3)
+    inv(3,3) = mat(1,1)*mat(2,2)-mat(1,2)*mat(2,1)
+
+    det = det_3x3(mat)
+
+    if ( abs(det) > zero ) then
+      inv = inv/det
+    end if
+
+    if ( present(status) ) then
+      if (abs(det) <= near_zero ) status = -1
+    end if
+
+  end subroutine mat_inv_3x3
+
+  pure subroutine mat_inv_LU( m, mat, inv, status )
+    use set_constants, only : zero, one
+    integer,                  intent(in) :: m
+    real(dp), dimension(m,m), intent(in) :: mat
+    real(dp), dimension(m,m), intent(out) :: inv
+    integer,  optional,       intent(out) :: status
+    real(dp), dimension(m,m) :: LU, P, bin
+    integer :: i, stat
+    if (present(status)) status = 0
+    call LUdecomp(LU, P, mat, m, status=stat )
+    if (present(status)) status = stat
+    inv = zero
+    if ( stat /= 0 ) return
+    bin = zero
+    do i = 1,m
+      bin(i,i) = one
+    end do
+    call LUsolve_multiple_rhs( inv, LU, P, bin, m, m )
+  end subroutine mat_inv_LU
+
+  pure subroutine linear_solve_LU( m, A, b, x, status )
+    use set_constants, only : zero, one
+    integer,                  intent(in)  :: m
+    real(dp), dimension(m,m), intent(in)  :: A
+    real(dp), dimension(m),   intent(in)  :: b
+    real(dp), dimension(m),   intent(out) :: x
+    integer,  optional,       intent(out) :: status
+    real(dp), dimension(m,m) :: LU, P
+    integer :: i, stat
+    if (present(status)) status = 0
+    call LUdecomp(LU, P, A, m, status=stat )
+    if (present(status)) status = stat
+    x = zero
+    if ( stat /= 0 ) return
+    call LUsolve_single_rhs( x, LU, P, b, m )
+  end subroutine linear_solve_LU
+
+  pure subroutine linear_solve_2x2(A,b,x,status)
+    use set_constants, only : zero
+    real(dp), dimension(2,2), intent(in)  :: A
+    real(dp), dimension(2),   intent(in)  :: b
+    real(dp), dimension(2),   intent(out) :: x
+    integer,  optional,       intent(out) :: status
+    real(dp) :: det
+    if ( present(status) ) status = 0
+    x(1) = A(2,2)*b(1) - A(1,2)*b(2)
+    x(2) = A(1,1)*b(2) - A(2,1)*b(1)
+    det = det_2x2(A)
+    if ( abs(det) > zero ) then
+      x = x/det
+    else
+      if ( present(status) ) status = -1
+    end if
+  end subroutine linear_solve_2x2
+
+
+  pure subroutine mat_inv(mat,inv,status)
+    use set_constants, only : zero
+    real(dp), dimension(:,:),                     intent(in)  :: mat
+    real(dp), dimension(size(mat,1),size(mat,2)), intent(out) :: inv
+    integer,  optional,                           intent(out) :: status
+    integer :: m, n
+    inv = zero
+    if (present(status)) status = 0
+    
+    m = size(mat,1)
+    n = size(mat,2)
+
+    if ( m /= n ) then
+      if (present(status)) status = -1
+      return
+    end if
+
+    select case(m)
+    case(0)
+      if (present(status)) status = -1
+    case(1)
+      call mat_inv_1x1(mat,inv,status=status)
+    case(2)
+      call mat_inv_2x2(mat,inv,status=status)
+    case(3)
+      call mat_inv_3x3(mat,inv,status=status)
+    case default
+      call mat_inv_LU(m,mat,inv,status=status)
+    end select
+  end subroutine mat_inv
+
+  pure subroutine linear_solve(A,b,x,status)
+    use set_constants, only : zero
+    real(dp), dimension(:,:),         intent(in)  :: A
+    real(dp), dimension(size(A,1)), intent(in)  :: b
+    real(dp), dimension(size(A,1)), intent(out) :: x
+    integer,  optional,               intent(out) :: status
+    integer :: m, n
+    x = zero
+    if (present(status)) status = 0
+    
+    m = size(A,1)
+    n = size(A,2)
+
+    if ( m /= n ) then
+      if (present(status)) status = -1
+      return
+    end if
+
+    select case(m)
+    case(1)
+      x(1) = b(1)/A(1,1)
+    case(2)
+      call linear_solve_2x2(A,b,x,status=status)
+    case default
+      call linear_solve_LU(m,A,b,x,status=status)
+    end select
+  end subroutine linear_solve
+
 
   pure function vector_norm( vector )
     use set_precision, only : dp
@@ -2242,15 +2448,17 @@ contains
     vector_norm = sqrt( vector_norm )
   end function vector_norm
 
-  pure subroutine LUdecomp( LU, P, A, m )
+  pure subroutine LUdecomp( LU, P, A, m, status )
     use set_precision, only : dp
     use set_constants, only : zero, one
     real(dp), dimension(m,m), intent(out) :: LU,P
     real(dp), dimension(m,m), intent(in)  :: A
     integer,                  intent(in)  :: m
+    integer,  optional,       intent(out) :: status
     real(dp), dimension(m) :: ctemp1, LUtemp
     integer  :: col, row, maxi, ipr
     real(dp) :: factor
+    if (present(status)) status = 0
     LU = A
     P = zero
     do col = 1,m
@@ -2274,6 +2482,8 @@ contains
           LU(row,col+1:m) = LUtemp(col+1:m)
           LU(row,col) = factor
         end do
+      else
+        if (present(status)) status = -1
       end if
     end do
   end subroutine LUdecomp
@@ -2283,7 +2493,7 @@ contains
     real(dp), dimension(m),   intent(out) :: x
     real(dp), dimension(m,m), intent(in)  :: LU, P
     real(dp), dimension(m),   intent(in)  :: bin
-    integer,                  intent(in)  :: m
+    integer,                  intent(in)  :: m 
     integer :: i, row
     real(dp), dimension(m) :: b, d
     b = matmul(P,bin) ! Permute b matrix
@@ -2308,24 +2518,6 @@ contains
       call LUsolve_single_rhs(x(:,n),LU,P,bin(:,n),m)
     end do
   end subroutine LUsolve_multiple_rhs
-
-  subroutine mat_inv( mat, inv, n )
-    use set_precision, only : dp
-    use set_constants, only : zero, one
-    integer,                  intent(in)  :: n
-    real(dp), dimension(n,n), intent(in)  :: mat
-    real(dp), dimension(n,n), intent(out) :: inv
-    integer                  :: i
-    real(dp), dimension(n)   :: b
-    real(dp), dimension(n,n) :: lu, p
-    call ludecomp( lu, p, mat, n )
-    inv = zero
-    do i = 1,n
-      b = zero
-      b(i) = one
-      call lusolve( inv(:,i), lu, p, b, n )
-    end do
-  end subroutine mat_inv
 
   elemental subroutine LegendrePolynomialAndDerivative(N,x,LN,dLN)
     use set_constants, only : zero, one, two
@@ -3409,6 +3601,7 @@ module interpolant_derived_type
   implicit none
   private
   public :: interpolant_t
+  public :: interpolant_w_3D_data_t
 
   type :: interpolant_t
     integer :: Nmax
@@ -3425,31 +3618,42 @@ module interpolant_derived_type
     procedure, public, pass   :: normal_vectors_2D, normal_vectors_3D
     ! procedure, public, pass   :: map_point_3D
     procedure, public, pass   :: map_point_3D_curve, map_point_3D_surface, map_point_3D_volume
-    procedure, public, pass   :: distance_point_2D, distance_point_3D
-    procedure, public, pass   :: min_distance_2D_step, min_distance_3D_step
   end type interpolant_t
+
+  type, extends(interpolant_t) :: interpolant_w_3D_data_t
+    integer                                 :: n_dim
+    integer,  dimension(3)                  :: Npts
+    real(dp), dimension(:,:,:), allocatable :: X1, X2, X3
+  contains
+    private
+    procedure, public, pass :: create  => create_interpolant_w_3D_data
+    procedure, public, pass :: destroy => destroy_interpolant_w_3D_data
+    procedure, public, pass :: pt_interp
+    procedure, public, pass :: pt_dist_fun
+    procedure, public, pass :: min_distance
+  end type interpolant_w_3D_data_t
 
   interface interpolant_t
     procedure constructor
   end interface interpolant_t
 
-  interface pt_interp
-    module procedure curv_pt_interp
-    module procedure surf_pt_interp
-    module procedure volm_pt_interp
-  end interface pt_interp
+  ! interface pt_interp
+  !   module procedure curv_pt_interp
+  !   module procedure surf_pt_interp
+  !   module procedure volm_pt_interp
+  ! end interface pt_interp
 
-  interface pt_diff
-    module procedure curv_pt_diff
-    module procedure surf_pt_diff
-    module procedure volm_pt_diff
-  end interface pt_diff
+  ! interface pt_diff
+  !   module procedure curv_pt_diff
+  !   module procedure surf_pt_diff
+  !   module procedure volm_pt_diff
+  ! end interface pt_diff
 
-  interface min_dist_pt
-    module procedure min_dist_pt_curv
-    module procedure min_dist_pt_surf
-    module procedure min_dist_pt_volm
-  end interface min_dist_pt
+  ! interface min_dist_pt
+  !   module procedure min_dist_pt_curv
+  !   module procedure min_dist_pt_surf
+  !   module procedure min_dist_pt_volm
+  ! end interface min_dist_pt
 contains
 
   pure elemental subroutine destroy_interpolant(this)
@@ -3459,6 +3663,16 @@ contains
     if ( allocated(this%wb) )   deallocate(this%wb)
     this%Nmax = 0
   end subroutine destroy_interpolant
+
+  pure elemental subroutine destroy_interpolant_w_3D_data(this)
+    class(interpolant_w_3D_data_t), intent(inout) :: this
+    if ( allocated(this%X1) ) deallocate(this%X1)
+    if ( allocated(this%X2) ) deallocate(this%X2)
+    if ( allocated(this%X3) ) deallocate(this%X3)
+    this%n_dim = 0
+    this%Npts  = 0
+    call this%interpolant_t%destroy()
+  end subroutine destroy_interpolant_w_3D_data
 
   pure elemental function constructor(N) result(this)
     use linspace_helper, only : linspace
@@ -3478,6 +3692,26 @@ contains
       this%Dmat(1:j,1:j,j,:) = mth_order_polynomial_derivative_matrix( this%xb(1:j,j), this%wb(1:j,j), 2 )
     end do
   end function constructor
+
+  pure subroutine create_interpolant_w_3D_data( this, X1, X2, X3, shp )
+    class(interpolant_w_3D_data_t), intent(inout) :: this
+    real(dp), dimension(:),         intent(in) :: X1, X2, X3
+    integer,  dimension(:),         intent(in) :: shp
+    integer,  dimension(3) :: shp_
+    call this%destroy()
+    this%n_dim = size(shp)
+    shp_ = 1
+    shp_(1:this%n_dim) = shp
+    this%Npts = shp_
+    this%interpolant_t = interpolant_t(n=maxval(shp_))
+    
+    allocate(this%X1(shp_(1),shp_(2),shp_(3)))
+    allocate(this%X2(shp_(1),shp_(2),shp_(3)))
+    allocate(this%X3(shp_(1),shp_(2),shp_(3)))
+    this%X1 = reshape(X1,shp_)
+    this%X2 = reshape(X2,shp_)
+    this%X3 = reshape(X3,shp_)
+  end subroutine create_interpolant_w_3D_data
 
   pure elemental logical function almost_equal(a,b)
     real(dp), intent(in) :: a, b
@@ -4040,45 +4274,82 @@ contains
   end function volm_pt_interp
 
   pure subroutine curv_pt_diff(this,X1,X2,X3,pt,xyz,grad,hess)
-    type(interpolant_t),    intent(in)  :: this 
-    real(dp), dimension(:), intent(in)  :: X1, X2, X3
-    real(dp),               intent(in)  :: pt
-    real(dp), dimension(3), intent(out) :: xyz
-    real(dp), dimension(3), intent(out) :: grad
-    real(dp), dimension(3), intent(out) :: hess
+    type(interpolant_t),              intent(in)  :: this 
+    real(dp), dimension(:),           intent(in)  :: X1, X2, X3
+    real(dp),                         intent(in)  :: pt
+    real(dp), dimension(3),           intent(out) :: xyz
+    real(dp), dimension(3), optional, intent(out) :: grad
+    real(dp), dimension(3), optional, intent(out) :: hess
+    real(dp), dimension(3) :: gtmp
     integer,  dimension(1) :: Npts
     Npts = shape(X1)
-    call this%lagbary_wderiv2(pt,1,X1,Npts,xyz(1),grad(1),hess(1) )
-    call this%lagbary_wderiv2(pt,1,X2,Npts,xyz(2),grad(2),hess(2) )
-    call this%lagbary_wderiv2(pt,1,X3,Npts,xyz(3),grad(3),hess(3) )
+    if ( present(hess) ) then
+      call this%lagbary_wderiv2(pt,1,X1,Npts,xyz(1),gtmp(1),hess(1) )
+      call this%lagbary_wderiv2(pt,1,X2,Npts,xyz(2),gtmp(2),hess(2) )
+      call this%lagbary_wderiv2(pt,1,X3,Npts,xyz(3),gtmp(3),hess(3) )
+      if ( present(grad) ) grad = gtmp
+    elseif ( present(grad) ) then
+      call this%lagbary_wderiv(pt,1,X1,Npts,xyz(1),grad(1) )
+      call this%lagbary_wderiv(pt,1,X2,Npts,xyz(2),grad(2) )
+      call this%lagbary_wderiv(pt,1,X3,Npts,xyz(3),grad(3) )
+    else
+      call this%lagbary(pt,1,X1,Npts,xyz(1) )
+      call this%lagbary(pt,1,X2,Npts,xyz(2) )
+      call this%lagbary(pt,1,X3,Npts,xyz(3) )
+    end if
   end subroutine curv_pt_diff
 
   pure subroutine surf_pt_diff(this,X1,X2,X3,pt,xyz,grad,hess)
-    type(interpolant_t),        intent(in)  :: this 
-    real(dp), dimension(:,:),   intent(in)  :: X1, X2, X3
-    real(dp), dimension(2),     intent(in)  :: pt
-    real(dp), dimension(3),     intent(out) :: xyz
-    real(dp), dimension(2,3),   intent(out) :: grad
-    real(dp), dimension(3,3),   intent(out) :: hess
+    type(interpolant_t),                intent(in)  :: this 
+    real(dp), dimension(:,:),           intent(in)  :: X1, X2, X3
+    real(dp), dimension(2),             intent(in)  :: pt
+    real(dp), dimension(3),             intent(out) :: xyz
+    real(dp), dimension(2,3), optional, intent(out) :: grad
+    real(dp), dimension(3,3), optional, intent(out) :: hess
+    real(dp), dimension(2,3) :: gtmp
     integer,  dimension(2) :: Npts
     Npts = shape(X1)
-    call this%lagbary_2D_whess(pt,X1,Npts,xyz(1),grad(:,1),hess(:,1) )
-    call this%lagbary_2D_whess(pt,X2,Npts,xyz(2),grad(:,2),hess(:,2) )
-    call this%lagbary_2D_whess(pt,X3,Npts,xyz(3),grad(:,3),hess(:,3) )
+    if ( present(hess) ) then
+      call this%lagbary_2D_whess(pt,X1,Npts,xyz(1),gtmp(:,1),hess(:,1) )
+      call this%lagbary_2D_whess(pt,X2,Npts,xyz(2),gtmp(:,2),hess(:,2) )
+      call this%lagbary_2D_whess(pt,X3,Npts,xyz(3),gtmp(:,3),hess(:,3) )
+      if ( present(grad) ) grad = gtmp
+    elseif ( present(grad) ) then
+      call this%lagbary_2D_wgrad(pt,X1,Npts,xyz(1),grad(:,1) )
+      call this%lagbary_2D_wgrad(pt,X2,Npts,xyz(2),grad(:,2) )
+      call this%lagbary_2D_wgrad(pt,X3,Npts,xyz(3),grad(:,3) )
+    else
+      call this%lagbary_2D(pt,X1,Npts,xyz(1) )
+      call this%lagbary_2D(pt,X2,Npts,xyz(2) )
+      call this%lagbary_2D(pt,X3,Npts,xyz(3) )
+    end if
   end subroutine surf_pt_diff
 
   pure subroutine volm_pt_diff(this,X1,X2,X3,pt,xyz,grad,hess)
-    type(interpolant_t),        intent(in)  :: this 
-    real(dp), dimension(:,:,:), intent(in)  :: X1, X2, X3
-    real(dp), dimension(3),     intent(in)  :: pt
-    real(dp), dimension(3),     intent(out) :: xyz
-    real(dp), dimension(3,3),   intent(out) :: grad
-    real(dp), dimension(6,3),   intent(out) :: hess
+    type(interpolant_t),                intent(in)  :: this 
+    real(dp), dimension(:,:,:),         intent(in)  :: X1, X2, X3
+    real(dp), dimension(3),             intent(in)  :: pt
+    real(dp), dimension(3),             intent(out) :: xyz
+    real(dp), dimension(3,3), optional, intent(out) :: grad
+    real(dp), dimension(6,3), optional, intent(out) :: hess
+    real(dp), dimension(3,3) :: gtmp
     integer,  dimension(3) :: Npts
     Npts = shape(X1)
-    call this%lagbary_3D_whess(pt,X1,Npts,xyz(1),grad(:,1),hess(:,1) )
-    call this%lagbary_3D_whess(pt,X2,Npts,xyz(2),grad(:,2),hess(:,2) )
-    call this%lagbary_3D_whess(pt,X3,Npts,xyz(3),grad(:,3),hess(:,3) )
+    if ( present(hess) ) then
+      call this%lagbary_3D_whess(pt,X1,Npts,xyz(1),gtmp(:,1),hess(:,1) )
+      call this%lagbary_3D_whess(pt,X2,Npts,xyz(2),gtmp(:,2),hess(:,2) )
+      call this%lagbary_3D_whess(pt,X3,Npts,xyz(3),gtmp(:,3),hess(:,3) )
+      if ( present(grad) ) grad = gtmp
+    elseif ( present(grad) ) then
+      call this%lagbary_3D_wgrad(pt,X1,Npts,xyz(1),grad(:,1) )
+      call this%lagbary_3D_wgrad(pt,X2,Npts,xyz(2),grad(:,2) )
+      call this%lagbary_3D_wgrad(pt,X3,Npts,xyz(3),grad(:,3) )
+    else
+      call this%lagbary_3D(pt,X1,Npts,xyz(1) )
+      call this%lagbary_3D(pt,X2,Npts,xyz(2) )
+      call this%lagbary_3D(pt,X3,Npts,xyz(3) )
+    end if
+
   end subroutine volm_pt_diff
 
   pure subroutine curv_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
@@ -4087,350 +4358,369 @@ contains
     real(dp),               intent(in)  :: pt
     real(dp), dimension(3), intent(in)  :: xyz_pt
     real(dp),               intent(out) :: fval
-    real(dp),               intent(out) :: dfval
-    real(dp),               intent(out) :: d2fval
+    real(dp),     optional, intent(out) :: dfval
+    real(dp),     optional, intent(out) :: d2fval
     real(dp), dimension(3) :: grad
     real(dp), dimension(3) :: hess
     real(dp) :: L, A, A11
     real(dp), dimension(3) :: x_
 
-    call curv_pt_diff(this,X1,X2,X3,pt,x_,grad,hess)
+    if ( present(d2fval) ) then
+      call curv_pt_diff(this,X1,X2,X3,pt,x_,grad=grad,hess=hess)
+    elseif ( present(dfval) ) then
+      call curv_pt_diff(this,X1,X2,X3,pt,x_,grad=grad)
+    else
+      call curv_pt_diff(this,X1,X2,X3,pt,x_)
+    end if
     x_ = x_ - xyz_pt
     fval = norm2(x_)
-    L    = fval
-    A    = x_(1) * grad(1) + x_(2) * grad(2) + x_(3) * grad(3)
 
-    dfval = A / L
-
-    A11  = x_(1) * hess(1) + grad(1) * grad(1) &
-         + x_(2) * hess(2) + grad(2) * grad(2) &
-         + x_(3) * hess(3) + grad(3) * grad(3)
-
-    d2fval = A11*L*L - A*A
-    d2fval = d2fval/(L*L*L)
+    if ( present(d2fval).or.present(dfval) ) then
+      L    = fval
+      A    = x_(1) * grad(1) + x_(2) * grad(2) + x_(3) * grad(3)
+      if ( present(dfval)  ) dfval = A / L
+      if ( present(d2fval) ) then
+        A11  = x_(1) * hess(1) + grad(1) * grad(1) &
+            + x_(2) * hess(2) + grad(2) * grad(2) &
+            + x_(3) * hess(3) + grad(3) * grad(3)
+        d2fval = A11*L*L - A*A
+        d2fval = d2fval/(L*L*L)
+      end if
+    end if
 
   end subroutine curv_pt_dist_fun
 
   pure subroutine surf_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
-    type(interpolant_t),      intent(in)  :: this
-    real(dp), dimension(:,:), intent(in)  :: X1, X2, X3
-    real(dp), dimension(2),   intent(in)  :: pt
-    real(dp), dimension(3),   intent(in)  :: xyz_pt
-    real(dp),                 intent(out) :: fval
-    real(dp), dimension(2),   intent(out) :: dfval
-    real(dp), dimension(2,2), intent(out) :: d2fval
+    type(interpolant_t),                intent(in)  :: this
+    real(dp), dimension(:,:),           intent(in)  :: X1, X2, X3
+    real(dp), dimension(2),             intent(in)  :: pt
+    real(dp), dimension(3),             intent(in)  :: xyz_pt
+    real(dp),                           intent(out) :: fval
+    real(dp), dimension(2),   optional, intent(out) :: dfval
+    real(dp), dimension(2,2), optional, intent(out) :: d2fval
     real(dp), dimension(2,3) :: grad
     real(dp), dimension(3,3) :: hess
     real(dp) :: L, A11, A22, A12
     real(dp), dimension(3) :: x_
     real(dp), dimension(2) :: A
+    
+    if ( present(d2fval) ) then
+      call surf_pt_diff(this,X1,X2,X3,pt,x_,grad=grad,hess=hess)
+    elseif ( present(dfval) ) then
+      call surf_pt_diff(this,X1,X2,X3,pt,x_,grad=grad)
+    else
+      call surf_pt_diff(this,X1,X2,X3,pt,x_)
+    end if
 
-    call surf_pt_diff(this,X1,X2,X3,pt,x_,grad,hess)
     x_ = x_ - xyz_pt
     fval = norm2(x_)
-    L    = fval
-    A(1) = x_(1) * grad(1,1) + x_(2) * grad(1,2) + x_(3) * grad(1,3)
-    A(2) = x_(1) * grad(2,1) + x_(2) * grad(2,2) + x_(3) * grad(2,3)
-
-    dfval = A / L
-
-    A11  = x_(1) * hess(1,1) + grad(1,1) * grad(1,1) &
-         + x_(2) * hess(1,2) + grad(1,2) * grad(1,2) &
-         + x_(3) * hess(1,3) + grad(1,3) * grad(1,3)
-    A22  = x_(1) * hess(2,1) + grad(2,1) * grad(2,1) &
-         + x_(2) * hess(2,2) + grad(2,2) * grad(2,2) &
-         + x_(3) * hess(2,3) + grad(2,3) * grad(2,3)
-    A12  = x_(1) * hess(3,1) + grad(1,1) * grad(2,1) &
-         + x_(2) * hess(3,2) + grad(1,2) * grad(2,2) &
-         + x_(3) * hess(3,3) + grad(1,3) * grad(2,3)
-
-    d2fval(1,1) = A11*L*L - A(1)*A(1)
-    d2fval(2,1) = A12*L*L - A(1)*A(2)
-    d2fval(1,2) = d2fval(2,1)
-    d2fval(2,2) = A22*L*L - A(2)*A(2)
-
-    d2fval = d2fval/(L*L*L)
+    
+    if ( present(d2fval).or.present(dfval) ) then
+      L    = fval
+      A(1) = x_(1) * grad(1,1) + x_(2) * grad(1,2) + x_(3) * grad(1,3)
+      A(2) = x_(1) * grad(2,1) + x_(2) * grad(2,2) + x_(3) * grad(2,3)
+      if ( present(dfval)  ) dfval = A / L
+      if ( present(d2fval) ) then
+        A11  = x_(1) * hess(1,1) + grad(1,1) * grad(1,1) &
+             + x_(2) * hess(1,2) + grad(1,2) * grad(1,2) &
+             + x_(3) * hess(1,3) + grad(1,3) * grad(1,3)
+        A22  = x_(1) * hess(3,1) + grad(2,1) * grad(2,1) &
+             + x_(2) * hess(3,2) + grad(2,2) * grad(2,2) &
+             + x_(3) * hess(3,3) + grad(2,3) * grad(2,3)
+        A12  = x_(1) * hess(2,1) + grad(1,1) * grad(2,1) &
+             + x_(2) * hess(2,2) + grad(1,2) * grad(2,2) &
+             + x_(3) * hess(2,3) + grad(1,3) * grad(2,3)
+        d2fval(1,1) = A11*L*L - A(1)*A(1)
+        d2fval(2,1) = A12*L*L - A(1)*A(2)
+        d2fval(1,2) = d2fval(2,1)
+        d2fval(2,2) = A22*L*L - A(2)*A(2)
+        d2fval = d2fval/(L*L*L)
+      end if
+    end if
 
   end subroutine surf_pt_dist_fun
 
 
   pure subroutine volm_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
-    type(interpolant_t),        intent(in)  :: this
-    real(dp), dimension(:,:,:), intent(in)  :: X1, X2, X3
-    real(dp), dimension(3),     intent(in)  :: pt
-    real(dp), dimension(3),     intent(in)  :: xyz_pt
-    real(dp),                   intent(out) :: fval
-    real(dp), dimension(3),     intent(out) :: dfval
-    real(dp), dimension(3,3),   intent(out) :: d2fval
+    type(interpolant_t),                intent(in)  :: this
+    real(dp), dimension(:,:,:),         intent(in)  :: X1, X2, X3
+    real(dp), dimension(3),             intent(in)  :: pt
+    real(dp), dimension(3),             intent(in)  :: xyz_pt
+    real(dp),                           intent(out) :: fval
+    real(dp), dimension(3),   optional, intent(out) :: dfval
+    real(dp), dimension(3,3), optional, intent(out) :: d2fval
     real(dp), dimension(3,3) :: grad
     real(dp), dimension(6,3) :: hess
     real(dp) :: L, L2, A11, A22, A33, A12, A13, A23
     real(dp), dimension(3) :: x_, A
 
-    call volm_pt_diff(this,X1,X2,X3,pt,x_,grad,hess)
+    if ( present(d2fval) ) then
+      call volm_pt_diff(this,X1,X2,X3,pt,x_,grad=grad,hess=hess)
+    elseif ( present(dfval) ) then
+      call volm_pt_diff(this,X1,X2,X3,pt,x_,grad=grad)
+    else
+      call volm_pt_diff(this,X1,X2,X3,pt,x_)
+    end if
+
     x_ = x_ - xyz_pt
     fval = norm2(x_)
-    L    = fval
-    L2   = L*L
-    A(1) = x_(1) * grad(1,1) + x_(2) * grad(1,2) + x_(3) * grad(1,3)
-    A(2) = x_(1) * grad(2,1) + x_(2) * grad(2,2) + x_(3) * grad(2,3)
-    A(3) = x_(1) * grad(3,1) + x_(2) * grad(3,2) + x_(3) * grad(3,3)
 
-    dfval = A / L
-
-    A11  = x_(1) * hess(1,1) + grad(1,1) * grad(1,1) &
-         + x_(2) * hess(1,2) + grad(1,2) * grad(1,2) &
-         + x_(3) * hess(1,3) + grad(1,3) * grad(1,3)
-    A22  = x_(1) * hess(2,1) + grad(2,1) * grad(2,1) &
-         + x_(2) * hess(2,2) + grad(2,2) * grad(2,2) &
-         + x_(3) * hess(2,3) + grad(2,3) * grad(2,3)
-    A33  = x_(1) * hess(3,1) + grad(3,1) * grad(3,1) &
-         + x_(2) * hess(3,2) + grad(3,2) * grad(3,2) &
-         + x_(3) * hess(3,3) + grad(3,3) * grad(3,3)
-    A12  = x_(1) * hess(4,1) + grad(1,1) * grad(2,1) &
-         + x_(2) * hess(4,2) + grad(1,2) * grad(2,2) &
-         + x_(3) * hess(4,3) + grad(1,3) * grad(2,3)
-    A13  = x_(1) * hess(5,1) + grad(1,1) * grad(3,1) &
-         + x_(2) * hess(5,2) + grad(1,2) * grad(3,2) &
-         + x_(3) * hess(5,3) + grad(1,3) * grad(3,3)
-    A23  = x_(1) * hess(6,1) + grad(2,1) * grad(3,1) &
-         + x_(2) * hess(6,2) + grad(2,2) * grad(3,2) &
-         + x_(3) * hess(6,3) + grad(2,3) * grad(3,3)
-    d2fval(1,1) = A11*L2 - A(1)*A(1)
-    d2fval(2,1) = A12*L2 - A(1)*A(2)
-    d2fval(3,1) = A13*L2 - A(1)*A(3)
-    d2fval(1,2) = d2fval(2,1)
-    d2fval(2,2) = A22*L2 - A(2)*A(2)
-    d2fval(3,2) = A23*L2 - A(2)*A(3)
-    d2fval(1,3) = d2fval(3,1)
-    d2fval(2,3) = d2fval(3,2)
-    d2fval(3,3) = A33*L2 - A(3)*A(3)
-
-    d2fval = d2fval/(L**3)
+    if ( present(d2fval).or.present(dfval) ) then
+      L    = fval
+      L2   = L*L
+      A(1) = x_(1) * grad(1,1) + x_(2) * grad(1,2) + x_(3) * grad(1,3)
+      A(2) = x_(1) * grad(2,1) + x_(2) * grad(2,2) + x_(3) * grad(2,3)
+      A(3) = x_(1) * grad(3,1) + x_(2) * grad(3,2) + x_(3) * grad(3,3)
+      if ( present(dfval)  ) dfval = A / L
+      if ( present(d2fval) ) then
+        A11  = x_(1) * hess(1,1) + grad(1,1) * grad(1,1) &
+             + x_(2) * hess(1,2) + grad(1,2) * grad(1,2) &
+             + x_(3) * hess(1,3) + grad(1,3) * grad(1,3)
+        A22  = x_(1) * hess(2,1) + grad(2,1) * grad(2,1) &
+             + x_(2) * hess(2,2) + grad(2,2) * grad(2,2) &
+             + x_(3) * hess(2,3) + grad(2,3) * grad(2,3)
+        A33  = x_(1) * hess(3,1) + grad(3,1) * grad(3,1) &
+             + x_(2) * hess(3,2) + grad(3,2) * grad(3,2) &
+             + x_(3) * hess(3,3) + grad(3,3) * grad(3,3)
+        A12  = x_(1) * hess(4,1) + grad(1,1) * grad(2,1) &
+             + x_(2) * hess(4,2) + grad(1,2) * grad(2,2) &
+             + x_(3) * hess(4,3) + grad(1,3) * grad(2,3)
+        A13  = x_(1) * hess(5,1) + grad(1,1) * grad(3,1) &
+             + x_(2) * hess(5,2) + grad(1,2) * grad(3,2) &
+             + x_(3) * hess(5,3) + grad(1,3) * grad(3,3)
+        A23  = x_(1) * hess(6,1) + grad(2,1) * grad(3,1) &
+             + x_(2) * hess(6,2) + grad(2,2) * grad(3,2) &
+             + x_(3) * hess(6,3) + grad(2,3) * grad(3,3)
+        d2fval(1,1) = A11*L2 - A(1)*A(1)
+        d2fval(2,1) = A12*L2 - A(1)*A(2)
+        d2fval(3,1) = A13*L2 - A(1)*A(3)
+        d2fval(1,2) = d2fval(2,1)
+        d2fval(2,2) = A22*L2 - A(2)*A(2)
+        d2fval(3,2) = A23*L2 - A(2)*A(3)
+        d2fval(1,3) = d2fval(3,1)
+        d2fval(2,3) = d2fval(3,2)
+        d2fval(3,3) = A33*L2 - A(3)*A(3)
+        d2fval = d2fval/(L**3)
+      end if
+    end if
 
   end subroutine volm_pt_dist_fun
 
-  pure subroutine fminunc_1D( max_iter, iter, fk, dfk, d2fk, c1, gamma, fkp1, eta, dk )
-    use set_constants, only : one
-    integer,  intent(in)    :: max_iter
-    integer,  intent(inout) :: iter
-    real(dp), intent(in)    :: fk, dfk, d2fk, c1, gamma
-    real(dp), intent(out)   :: fkp1, eta, dk
+  pure function pt_interp(this,pt) result(xyz_eval)
+    use set_constants, only : zero
+    class(interpolant_w_3D_data_t), intent(in) :: this
+    real(dp), dimension(:),         intent(in) :: pt
+    real(dp), dimension(3)              :: xyz_eval
+    select case(size(pt))
+    case(1)
+      xyz_eval = curv_pt_interp(this%interpolant_t,this%X1(:,1,1),this%X2(:,1,1),this%X3(:,1,1),pt(1))
+    case(2)
+      xyz_eval = surf_pt_interp(this%interpolant_t,this%X1(:,:,1),this%X2(:,:,1),this%X3(:,:,1),pt)
+    case(3)
+      xyz_eval = volm_pt_interp(this%interpolant_t,this%X1(:,:,:),this%X2(:,:,:),this%X3(:,:,:),pt)
+    end select
+  end function pt_interp
 
-    eta = one
-    dk = -d2fk/dfk
-    fkp1 = fk + eta*dk
-    do while ( fk-fkp1 > c1*eta*abs(dk) )
-      eta = gamma*eta
-      fkp1 = fk + eta*dk
-    end do
-    iter = iter + 1
-  end subroutine fminunc_1D
-
-  pure subroutine min_dist_pt_curv(this,X1,X2,X3,xyz_pt,pt,dist,xyz_eval)
-    type(interpolant_t),    intent(in)    :: this
-    real(dp), dimension(:), intent(in)    :: X1, X2, X3
+  pure subroutine pt_dist_fun(this,xyz_pt,pt,fval,dfval,d2fval)
+    use set_constants, only : zero
+    class(interpolant_w_3D_data_t), intent(in) :: this
     real(dp), dimension(3), intent(in)    :: xyz_pt
-    real(dp),               intent(inout) :: pt
-    real(dp),               intent(inout) :: dist
-    real(dp), dimension(3), intent(out)   :: xyz_eval
-    real(dp) :: fval, dfval, d2fval
+    real(dp), dimension(:), intent(in)    :: pt
+    real(dp),               intent(out)   :: fval
+    real(dp), dimension(this%n_dim),            optional, intent(out) :: dfval
+    real(dp), dimension(this%n_dim,this%n_dim), optional, intent(out) :: d2fval
 
-    fval = dist
-    xyz_eval = curv_pt_interp(this,X1,X2,X3,pt)
-    fval = norm2( xyz_eval - xyz_pt )
-    dist = fval
-    call curv_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
-  end subroutine min_dist_pt_curv
-
-  pure subroutine min_dist_pt_surf(this,X1,X2,X3,xyz_pt,pt,dist,xyz_eval)
-    type(interpolant_t),    intent(in)    :: this
-    real(dp), dimension(:,:), intent(in)    :: X1, X2, X3
-    real(dp), dimension(3), intent(in)    :: xyz_pt
-    real(dp), dimension(2), intent(inout) :: pt
-    real(dp),               intent(inout) :: dist
-    real(dp), dimension(3), intent(out)   :: xyz_eval
-    real(dp) :: fval
-    real(dp), dimension(2)   :: dfval
-    real(dp), dimension(2,2) :: d2fval
-
-    fval = dist
-
-    xyz_eval = surf_pt_interp(this,X1,X2,X3,pt)
-    fval = norm2( xyz_eval - xyz_pt )
-    call surf_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
-
-    dist = fval
-  end subroutine min_dist_pt_surf
-
-  pure subroutine min_dist_pt_volm(this,X1,X2,X3,xyz_pt,pt,dist,xyz_eval)
-    type(interpolant_t),    intent(in)    :: this
-    real(dp), dimension(:,:,:), intent(in)    :: X1, X2, X3
-    real(dp), dimension(3), intent(in)    :: xyz_pt
-    real(dp), dimension(3), intent(inout) :: pt
-    real(dp),               intent(inout) :: dist
-    real(dp), dimension(3), intent(out)   :: xyz_eval
-    real(dp) :: fval
-    real(dp), dimension(3)   :: dfval
-    real(dp), dimension(3,3) :: d2fval
-
-    fval = dist
-
-    xyz_eval = volm_pt_interp(this,X1,X2,X3,pt)
-    fval = norm2( xyz_eval - xyz_pt )
-    call volm_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
-
-    dist = fval
-  end subroutine min_dist_pt_volm
+    select case(size(pt))
+    case(1)
+      call curv_pt_dist_fun( this%interpolant_t, this%X1(:,1,1),this%X2(:,1,1),this%X3(:,1,1),pt(1),xyz_pt,fval,dfval=dfval(1),d2fval=d2fval(1,1) )
+    case(2)
+      call surf_pt_dist_fun( this%interpolant_t, this%X1(:,:,1),this%X2(:,:,1),this%X3(:,:,1),pt,xyz_pt,fval,dfval=dfval,d2fval=d2fval )
+    case(3)
+      call volm_pt_dist_fun( this%interpolant_t, this%X1(:,:,:),this%X2(:,:,:),this%X3(:,:,:),pt,xyz_pt,fval,dfval=dfval,d2fval=d2fval )
+    end select
+  end subroutine pt_dist_fun
 
 
-
-
-  pure subroutine min_distance_2D_step(this,X1,X2,X3,xyz_point,t,xyz_eval,dist)
-    class(interpolant_t),   intent(in)  :: this
-    real(dp), dimension(:), intent(in)    :: X1, X2, X3
-    real(dp), dimension(3), intent(in)    :: xyz_point
-    real(dp),               intent(inout) :: t ! [t]
-    real(dp), dimension(3), intent(out)   :: xyz_eval
-    real(dp),               intent(out)   :: dist
+  pure subroutine min_distance(this,xyz_point,pt,dist,xyz_eval,max_iter,gamma,c1,c2,step_tol,fun_tol,status)
+    use math,          only : linear_solve
+    use set_constants, only : zero, one, two, four
+    class(interpolant_w_3D_data_t),   intent(in)    :: this
+    real(dp), dimension(3),           intent(in)    :: xyz_point
+    real(dp), dimension(:),           intent(inout) :: pt
+    real(dp),                         intent(out)   :: dist
+    real(dp), dimension(3), optional, intent(out)   :: xyz_eval
+    integer,                optional, intent(in)    :: max_iter
+    real(dp),               optional, intent(in)    :: gamma, c1, c2, step_tol, fun_tol
+    integer,                optional, intent(out)   :: status
+    real(dp), dimension(this%n_dim) :: dk, xk, xkp1, dfk, dfkp1
+    real(dp), dimension(this%n_dim,this%n_dim) :: d2fk
+    real(dp) :: fk, fkp1, eta, gamma_, c1_, c2_, stol, ftol, ef, es
     
-    real(dp), dimension(3) :: grad
-    real(dp), dimension(3) :: hess
-    real(dp) :: L
+    integer :: k, max_iter_
+    logical  :: wc1, wc2, converged
+    real(dp), parameter :: h = 1.0e-6_dp
+    ! real(dp) :: a_i, a_lo, a_hi, a_im1, f_0, f_i, f_im1, df_0, df_i, df_im1
+    ! logical  :: zoom, line_conv
+    ! integer  :: iter
+    ! real(dp), dimension(this%n_dim) :: dfk_alt
+    ! real(dp), dimension(this%n_dim,this%n_dim) :: d2fk_alt
+    ! real(dp), parameter :: h = 1.0e-6_dp
+    ! real(dp) :: f__, fp_, fm_, f_p, f_m, fpp, fpm, fmp, fmm
 
-    call this%distance_point_2D([t],X1,X2,X3,xyz_point,dist,xyz_eval,grad,hess)
+    if ( present(status) ) status = 0
+
+    max_iter_ = 10000
+    if ( present(max_iter) ) max_iter_ = max_iter
+
+    gamma_ = 0.5_dp
+    if ( present(gamma) ) gamma_ = gamma
+
+    c1_ = 1.0e-6_dp
+    if ( present(c1) ) c1_ = c1
+
+    c2_ = 0.1_dp
+    if ( present(c2) ) c2_ = c2
+
+    stol = 1.0e-15_dp
+    if ( present(step_tol) ) stol = step_tol
+
+    ftol = 1.0e-12_dp
+    if ( present(fun_tol) ) ftol = fun_tol
+
+    xk = pt(1:this%n_dim)
     
-  end subroutine min_distance_2D_step
-
-  pure subroutine distance_point_2D(this,point,X1,X2,X3,xyz_point,dist2,xyz_eval,grad,hess)
-    class(interpolant_t),   intent(in)  :: this
-    real(dp), dimension(1), intent(in)  :: point ! [t]
-    real(dp), dimension(:), intent(in)  :: X1, X2, X3
-    real(dp), dimension(3), intent(in)  :: xyz_point
-    real(dp),               intent(out) :: dist2
-    real(dp), dimension(3), intent(out) :: xyz_eval
-    real(dp), dimension(3), intent(out) :: grad
-    real(dp), dimension(3), intent(out) :: hess
-    integer,  dimension(1) :: Npts
-    Npts = shape(X1)
-    ! lagbary_wderiv2(this,x,dir,fval,Npts,val,dval,d2val)
-    call this%lagbary_wderiv2(point(1),1,X1,Npts,xyz_eval(1),grad(1),hess(1) )
-    call this%lagbary_wderiv2(point(1),1,X2,Npts,xyz_eval(2),grad(2),hess(2) )
-    call this%lagbary_wderiv2(point(1),1,X3,Npts,xyz_eval(3),grad(3),hess(3) )
-    dist2 = sum((xyz_eval - xyz_point)**2)
-  end subroutine distance_point_2D
-
-  pure subroutine distance_point_3D(this,point,X1,X2,X3,xyz_point,dist2,xyz_eval,grad,hess)
-    class(interpolant_t),     intent(in)  :: this
-    real(dp), dimension(2),   intent(in)  :: point ! [u,v]
-    real(dp), dimension(:,:), intent(in)  :: X1, X2, X3
-    real(dp), dimension(3),   intent(in)  :: xyz_point
-    real(dp),                 intent(out) :: dist2
-    real(dp), dimension(3),   intent(out) :: xyz_eval
-    real(dp), dimension(2,3), intent(out) :: grad ! [dx/du, dy/du, dz/du; dx/dv, dy/dv, dz/dv]
-    real(dp), dimension(3,3), intent(out) :: hess
-    integer,  dimension(2) :: Npts
-    Npts = shape(X1)
-    ! lagbary_2D_whess(this,x,fval,Npts,val,grad,hess)
-    call this%lagbary_2D_whess(point,X1,Npts,xyz_eval(1),grad(:,1),hess(:,1) )
-    call this%lagbary_2D_whess(point,X2,Npts,xyz_eval(2),grad(:,2),hess(:,2) )
-    call this%lagbary_2D_whess(point,X3,Npts,xyz_eval(3),grad(:,3),hess(:,3) )
-    dist2 = sum((xyz_eval - xyz_point)**2)
-  end subroutine distance_point_3D
-
-  pure subroutine min_distance_3D_step(this,X1,X2,X3,xyz_point,uv,xyz_eval,dist)
-    use set_constants, only : one
-    class(interpolant_t),   intent(in)  :: this
-    real(dp), dimension(:,:), intent(in)    :: X1, X2, X3
-    real(dp), dimension(3),   intent(in)    :: xyz_point
-    real(dp), dimension(2),   intent(inout) :: uv ! [u,v]
-    real(dp), dimension(3),   intent(out)   :: xyz_eval
-    real(dp),                 intent(out)   :: dist
     
-    real(dp), dimension(2,3) :: grad
-    real(dp), dimension(3,3) :: hess
-    real(dp) :: L2, L, A, A1, B, B2, AB12, detJ, detJ2
-    real(dp), dimension(2,2) :: J, Jinv, tmp_eye
-    real(dp) :: tmp
-    real(dp), dimension(2) :: RHS, delta
-    real(dp), dimension(3) :: x_
+    ! f__ = norm2( this%pt_interp(xk + [0.0_dp,0.0_dp]) - xyz_point )
+    ! fp_ = norm2( this%pt_interp(xk + [     h,0.0_dp]) - xyz_point )
+    ! fm_ = norm2( this%pt_interp(xk + [    -h,0.0_dp]) - xyz_point )
+    ! f_p = norm2( this%pt_interp(xk + [0.0_dp,     h]) - xyz_point )
+    ! f_m = norm2( this%pt_interp(xk + [0.0_dp,    -h]) - xyz_point )
+    ! fpp = norm2( this%pt_interp(xk + [     h,     h]) - xyz_point )
+    ! fpm = norm2( this%pt_interp(xk + [     h,    -h]) - xyz_point )
+    ! fmp = norm2( this%pt_interp(xk + [    -h,     h]) - xyz_point )
+    ! fmm = norm2( this%pt_interp(xk + [    -h,    -h]) - xyz_point )
 
-    call this%distance_point_3D(uv,X1,X2,X3,xyz_point,L2,xyz_eval,grad,hess)
-    x_ = xyz_eval - xyz_point
-    dist = sqrt(L2)
-    L = dist
-    ! A  = x_(1) * grad(1,1) & ! x * x_xi
-    !    + x_(2) * grad(1,2) & ! y * y_xi
-    !    + x_(3) * grad(1,3)   ! z * z_xi
+    ! dfk_alt(1) = (fp_ - fm_)/(two*h)
+    ! dfk_alt(2) = (f_p - f_m)/(two*h)
 
-    ! B    = x_(1) * grad(2,1) & ! x * x_eta
-    !      + x_(2) * grad(2,2) & ! y * y_eta
-    !      + x_(3) * grad(2,3)   ! z * z_eta
+    ! d2fk_alt(1,1) = (fp_ - two*f__ + fm_)/(h*h)
+    ! d2fk_alt(2,2) = (f_p - two*f__ + f_m)/(h*h)
+    ! d2fk_alt(1,2) = (fpp - fpm - fmp + fmm)/(four*h*h)
+    ! d2fk_alt(2,1) = d2fk_alt(1,2)
 
-    ! A1   = x_(1) * hess(1,1) + grad(1,1)**2 &
-    !      + x_(2) * hess(1,2) + grad(1,2)**2 &
-    !      + x_(3) * hess(1,3) + grad(1,3)**2
+    call this%pt_dist_fun(xyz_point,xk,fk)
+    dist = fk
 
-    ! AB12 = x_(1) * hess(2,1) + grad(1,1) * grad(2,1) &
-    !      + x_(2) * hess(2,2) + grad(1,2) * grad(2,2) &
-    !      + x_(3) * hess(2,3) + grad(1,3) * grad(2,3)
+    if ( dist > zero) then
+      do k = 1,max_iter_
+        call this%pt_dist_fun(xyz_point,xk,fk,dfval=dfk,d2fval=d2fk)
+        
+        eta = one
+        call linear_solve(-d2fk,dfk,dk,status=status)
+        
+        ! backtracking loop
+        do
+          xkp1 = xk + eta*dk
+          call this%pt_dist_fun(xyz_point,xkp1,fkp1,dfval=dfkp1)
+          wc1 = fkp1 <= fk + c1_*eta*dot_product(dfk,dk)
+          ! wc2 = abs( dot_product(dfkp1,dk) ) <= c2_*abs( dot_product(dfk,dk) )
+          wc2 = dot_product(dfkp1,dk) >= c2_*dot_product(dfk,dk)
+          if ( wc1.and.wc2 ) exit
+          if ( eta < h ) exit
+          eta = gamma_*eta ! calculate new eta
+        end do
 
-    ! B2   = x_(1) * hess(3,1) + grad(2,1)**2 &
-    !      + x_(2) * hess(3,2) + grad(2,2)**2 &
-    !      + x_(3) * hess(3,3) + grad(2,3)**2
 
-    A  = x_(1) * grad(1,1) & ! x * x_xi
-       + x_(2) * grad(1,2) & ! y * y_xi
-       + x_(3) * grad(1,3)   ! z * z_xi
+        es = norm2(dk)         ! calculate change in step size
+        ef = abs(fkp1 - fk)    ! calculate change in function
 
-    B    = x_(1) * grad(2,1) & ! x * x_eta
-         + x_(2) * grad(2,2) & ! y * y_eta
-         + x_(3) * grad(2,3)   ! z * z_eta
+        xk = xkp1
+        fk = fkp1
 
-    A1   = x_(1) * hess(1,1) + grad(1,1)**2 &
-         + x_(2) * hess(1,2) + grad(1,2)**2 &
-         + x_(3) * hess(1,3) + grad(1,3)**2
+        converged = ( (ef<ftol).and.(es<stol) )
+        if ( converged ) then
+          exit
+        end if
+      end do
 
-    AB12 = x_(1) * hess(2,1) + grad(1,1) * grad(2,1) &
-         + x_(2) * hess(2,2) + grad(1,2) * grad(2,2) &
-         + x_(3) * hess(2,3) + grad(1,3) * grad(2,3)
+      ! output
+      pt = 1
+      pt(1:this%n_dim) = xk
+      dist = fk
+      if (present(xyz_eval) ) xyz_eval = this%pt_interp(xk)
+    end if
 
-    B2   = x_(1) * hess(3,1) + grad(2,1)**2 &
-         + x_(2) * hess(3,2) + grad(2,2)**2 &
-         + x_(3) * hess(3,3) + grad(2,3)**2
+  end subroutine min_distance
 
-    J(1,1) = A1*L2 - A**2
-    J(2,1) = AB12*L2 - A*B
-    J(1,2) = J(2,1)
-    J(2,2) = B2*L2 - B**2
+  pure elemental function interp_step_length(a_jm1,a_jm2,f_jm1,f_jm2,df_jm1,df_jm2) result(a_j)
+    use set_constants, only : one, two, three
+    real(dp), intent(in) :: a_jm1, a_jm2, f_jm1, f_jm2, df_jm1, df_jm2
+    real(dp)             :: a_j
+    real(dp) :: d1, d2
+    d1 = df_jm2 + df_jm1 - three * ( f_jm2 - f_jm1 )/( a_jm2 - a_jm1)
+    d2 = sign(one,a_jm1-a_jm2) * sqrt( d1**2 - df_jm2 * df_jm1 )
+    a_j = a_jm1 - ( a_jm1 - a_jm2 ) * ( df_jm1 + d2 - d1 )/( df_jm1 - df_jm2 +two*d2 )
+  end function interp_step_length
 
-    J = J/(L**3)
-
+  pure elemental subroutine zoom_step_length( zoom, a_lo, a_hi, a_j, f_0, f_lo, f_j, df_0, df_j, c1, c2 )
+    use set_constants, only : zero
+    logical,  intent(inout) :: zoom
+    real(dp), intent(inout) :: a_lo, a_hi, a_j
+    real(dp), intent(in)    :: f_0, f_lo, f_j, df_0, df_j, c1, c2
     
-    detJ  = (A1*B2*L2 - A1*B**2 - B2*A**2 - AB12**2*L2 + two*AB12*A*B)/(L**4)
-    detJ2 = ( J(1,1) * J(2,2) - J(1,2)*J(2,1) )
+    if (zoom) then
+      if ( (f_j > f_0 + c1*a_j*df_0).or.(f_j>=f_lo) ) then
+        a_hi = a_j
+      else
+        if ( abs(df_j) <= -c2*df_0 ) then
+          zoom      = .false.
+          return
+        end if
+        if ( df_j*(a_hi-a_lo) >= zero) then
+          a_hi = a_lo
+        end if
+        a_lo = a_j
+      end if
+    end if
+  end subroutine zoom_step_length
 
-    Jinv(1,1) =  J(2,2)
-    Jinv(2,1) = -J(2,1)
-    Jinv(1,2) = -J(1,2)
-    Jinv(2,2) =  J(1,1)
-    Jinv = Jinv / detJ
+  pure elemental subroutine line_search( iter, a_i, a_lo, a_hi, a_im1, f_0, f_i, f_im1, df_0, df_i, df_im1, c1, c2, zoom, converged )
+    use set_constants, only : zero, one
+    integer,  intent(in)    :: iter
+    real(dp), intent(inout) :: a_i, a_lo, a_hi
+    real(dp), intent(in)    :: a_im1, f_0, f_i, f_im1, df_0, df_i, df_im1, c1, c2
+    logical,  intent(inout) :: zoom
+    logical,  intent(out)   :: converged
+    real(dp), parameter :: a_max = one
 
-    RHS = [A/L,B/L]
+    converged = .false.
+
+    if ( zoom ) return
+
+    if ( ( f_i > f_0 + c1 * a_i * df_0 ).or.((iter==1).and.(f_i >= f_im1)) ) then
+      a_lo = a_im1
+      a_hi = a_i
+      zoom = .true.
+      return
+    end if
+
+    if ( abs(df_i) <= -c2*df_0 ) then
+      zoom      = .false.
+      converged = .true.
+      return
+    end if
+
+    if ( df_i >= zero ) then
+      a_lo = a_i
+      a_hi = a_im1
+      zoom = .true.
+      return
+    end if
+
+    a_i = min( max( interp_step_length(a_i,a_im1,f_i,f_im1,df_i,df_im1), a_i ), a_max )
+  end subroutine line_search
 
 
-    ! debug
-    tmp_eye = matmul(Jinv,J)
-
-    delta = matmul(Jinv,RHS)
-
-    ! uv = max( min(uv - delta,one), -one )
-
-    uv = uv - delta
-
-    tmp = zero
-
-  end subroutine min_distance_3D_step
 
 end module interpolant_derived_type
 
@@ -5322,27 +5612,37 @@ contains
   end subroutine get_cell_node_coords_face
 
   pure function get_wall_distance_vec( gblock, idx, dir, xyz_point, n_iter ) result(out_vec)
-    use set_constants, only : half
+    use set_constants, only : one, two
+    use interpolant_derived_type, only : interpolant_w_3D_data_t
     class(grid_block),                                intent(in)  :: gblock
     integer, dimension(3),                            intent(in)  :: idx
     integer,                                          intent(in)  :: dir
     real(dp), dimension(3),                           intent(in)  :: xyz_point
     integer,                                          intent(in)  :: n_iter
     real(dp), dimension(3,n_iter+1) :: out_vec
+    real(dp), dimension(3) :: xyz_eval
     integer, dimension(2) :: shp
     real(dp), dimension(:,:,:), allocatable :: face_nodes
     real(dp), dimension(2) :: uv
-    real(dp) :: dist
-    integer :: i
+    real(dp) :: dist, dist_cmp
+    integer :: i, status
+    type(interpolant_w_3D_data_t) :: interp
 
     call gblock%get_fg_face_nodes(idx,shp,dir)
     allocate( face_nodes(shp(1),shp(2),3) )
     call gblock%get_fg_face_nodes(idx,shp,dir,face_nodes=face_nodes)
-    uv = half
+    
     out_vec(:,1) = xyz_point
+    call interp%create( pack(face_nodes(:,:,1),.true.), &
+                        pack(face_nodes(:,:,2),.true.), &
+                        pack(face_nodes(:,:,3),.true.), shape(face_nodes(:,:,1)) )
     do i = 1, n_iter
-      call gblock%grid_vars%interp%min_distance_3D_step(face_nodes(:,:,1),face_nodes(:,:,2),face_nodes(:,:,3),xyz_point,uv,out_vec(:,i+1),dist)
+      uv = [-one,-one] + two*real((i-1),dp)/real(n_iter,dp)
+      call interp%min_distance(xyz_point,uv,dist_cmp,xyz_eval=xyz_eval,status=status)
+      out_vec(:,i+1) = xyz_eval
     end do
+
+    call interp%destroy()
     deallocate( face_nodes )
   end function get_wall_distance_vec
 
@@ -6909,7 +7209,7 @@ program main
   n_ghost = [0,0,0]
   n_skip  = [2,2,2]
 
-  cell_idx = [1,1,2]
+  cell_idx = [1,1,1]
   n_iter   = 10
   
   call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
