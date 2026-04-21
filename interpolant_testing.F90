@@ -5619,7 +5619,7 @@ contains
     integer,                                          intent(in)  :: dir
     real(dp), dimension(3),                           intent(in)  :: xyz_point
     integer,                                          intent(in)  :: n_iter
-    real(dp), dimension(3,n_iter+1) :: out_vec
+    real(dp), dimension(3,n_iter+2) :: out_vec
     real(dp), dimension(3) :: xyz_eval
     integer, dimension(2) :: shp
     real(dp), dimension(:,:,:), allocatable :: face_nodes
@@ -5636,10 +5636,12 @@ contains
     call interp%create( pack(face_nodes(:,:,1),.true.), &
                         pack(face_nodes(:,:,2),.true.), &
                         pack(face_nodes(:,:,3),.true.), shape(face_nodes(:,:,1)) )
+    uv = [-one,-one]
+    out_vec(:,2) = interp%pt_interp(uv)
     do i = 1, n_iter
-      uv = [-one,-one] + two*real((i-1),dp)/real(n_iter,dp)
-      call interp%min_distance(xyz_point,uv,dist_cmp,xyz_eval=xyz_eval,status=status)
-      out_vec(:,i+1) = xyz_eval
+      ! uv = [-one,-one] + two*real((i-1),dp)/real(n_iter,dp)
+      call interp%min_distance(xyz_point,uv,dist_cmp,xyz_eval=xyz_eval,max_iter=1,status=status)
+      out_vec(:,i+2) = xyz_eval
     end do
 
     call interp%destroy()
@@ -7209,7 +7211,7 @@ program main
   n_ghost = [0,0,0]
   n_skip  = [2,2,2]
 
-  cell_idx = [1,1,1]
+  cell_idx = [1,1,2]
   n_iter   = 10
   
   call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
@@ -7236,7 +7238,7 @@ program main
   deallocate( face_nodes )
 
   pt = [three*cos(pi/32.0_dp),three*sin(pi/32.0_dp),one]
-  allocate(out_vec(3,n_iter+1))
+  allocate(out_vec(3,n_iter+2))
   out_vec = grid%gblock(1)%get_wall_distance_vec(cell_idx,dir,pt,n_iter)
   call output_line_subzone(n_dim,out_vec,'TEST_GRID',old)
   deallocate( out_vec )
