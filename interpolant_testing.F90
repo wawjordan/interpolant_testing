@@ -7336,7 +7336,7 @@ end module test_problem
 
 program main
   use set_precision, only : dp
-  use set_constants, only : zero, one, three, pi
+  use set_constants, only : zero, one, two, three, pi
   use math,          only : rand_coord_in_range
   use test_problem,  only : setup_grid, geom_space_wrapper, output_grid, output_volume_subzone, output_face_subzone, output_line_subzone
   use grid_derived_type, only : grid_type
@@ -7354,7 +7354,7 @@ program main
   real(dp), dimension(3) :: pt, xyz_eval
   integer, dimension(3) :: cell_idx
   integer, dimension(2) :: shp
-  real(dp) :: min_dist
+  real(dp) :: min_dist,ex,err
   integer :: bnd_num, n_iter, n_pts, n
   logical :: old
   character(100) :: zone_name
@@ -7375,9 +7375,12 @@ program main
 
   allocate(out_vec(3,2))
   do n = 1,n_pts
-    pt = rand_coord_in_range(3,[-one,-one,-one],[three,three,three])
-    call grid%gblock(1)%get_min_distance(bnd_num,pt,min_dist,max_iter=n_iter,xyz_eval=xyz_eval,clip=.true.,out_idx=cell_idx)
-    write(*,'(A,3(ES23.15),A,ES23.15)') 'pt = ',pt,' Minimum distance = ', min_dist
+    pt = rand_coord_in_range(3,[two,two,two],[three,three,three])
+    ! [three*cos(pi/32.0_dp),three*sin(pi/32.0_dp),one]
+    call grid%gblock(1)%get_min_distance(bnd_num,pt,min_dist,max_iter=n_iter,xyz_eval=xyz_eval,clip=.false.,out_idx=cell_idx)
+    ex = norm2(pt)-sqrt(two)
+    err = ex - min_dist
+    write(*,'(A,3(ES16.7),A,ES16.7,A,ES16.7)') 'pt = ',pt,' Min. distance = ', min_dist, ' Error: ', err
 
     call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
     allocate( face_nodes(shp(1),shp(2),3) )
