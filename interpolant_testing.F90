@@ -2188,7 +2188,7 @@ module math
   public :: linear_solve, mat_inv
   public :: LegendrePolynomialAndDerivative, LegendreGaussNodesAndWeights
   public :: maximal_extents
-  public :: rand_int_in_range
+  public :: rand_int_in_range, rand_coord_in_range
   public :: compute_pseudo_inverse
   public :: careful_divide
 
@@ -2213,6 +2213,15 @@ contains
     call random_number(harvest)
     num = nint( harvest*real(hi-lo,dp) + real(lo,dp) )
   end function rand_int_in_range
+
+  function rand_coord_in_range(dim,lo,hi) result(coord)
+    integer,                  intent(in) :: dim
+    real(dp), dimension(dim), intent(in) :: lo, hi
+    real(dp), dimension(dim)             :: coord
+    real(dp), dimension(dim) :: harvest
+    call random_number(harvest)
+    coord = harvest*(hi-lo) + lo
+  end function rand_coord_in_range
 
   pure function cross_product( vec1, vec2 )
     real(dp), dimension(3), intent(in) :: vec1, vec2
@@ -4541,7 +4550,7 @@ contains
   end subroutine pt_dist_fun
 
 
-  pure subroutine min_distance(this,xyz_point,pt,dist,xyz_eval,max_iter,gamma,c1,c2,step_tol,fun_tol,status)
+  pure subroutine min_distance(this,xyz_point,pt,dist,xyz_eval,iter,max_iter,gamma,c1,c2,step_tol,fun_tol,clip,status)
     use math,          only : linear_solve
     use set_constants, only : zero, one, two, four
     class(interpolant_w_3D_data_t),   intent(in)    :: this
@@ -4549,15 +4558,17 @@ contains
     real(dp), dimension(:),           intent(inout) :: pt
     real(dp),                         intent(out)   :: dist
     real(dp), dimension(3), optional, intent(out)   :: xyz_eval
+    integer,                optional, intent(out)   :: iter
     integer,                optional, intent(in)    :: max_iter
     real(dp),               optional, intent(in)    :: gamma, c1, c2, step_tol, fun_tol
+    logical,                optional, intent(in)    :: clip
     integer,                optional, intent(out)   :: status
     real(dp), dimension(this%n_dim) :: dk, xk, xkp1, dfk, dfkp1
     real(dp), dimension(this%n_dim,this%n_dim) :: d2fk
     real(dp) :: fk, fkp1, eta, gamma_, c1_, c2_, stol, ftol, ef, es
     
     integer :: k, max_iter_
-    logical  :: wc1, wc2, converged
+    logical  :: wc1, wc2, converged, clip_
     real(dp), parameter :: h = 1.0e-6_dp
     ! real(dp) :: a_i, a_lo, a_hi, a_im1, f_0, f_i, f_im1, df_0, df_i, df_im1
     ! logical  :: zoom, line_conv
@@ -4587,6 +4598,9 @@ contains
     ftol = 1.0e-12_dp
     if ( present(fun_tol) ) ftol = fun_tol
 
+    clip_ = .false.
+    if (present(clip)) clip_ = clip
+
     xk = pt(1:this%n_dim)
     
     
@@ -4610,7 +4624,7 @@ contains
 
     call this%pt_dist_fun(xyz_point,xk,fk)
     dist = fk
-
+    k = 1
     if ( dist > zero) then
       do k = 1,max_iter_
         call this%pt_dist_fun(xyz_point,xk,fk,dfval=dfk,d2fval=d2fk)
@@ -4621,6 +4635,9 @@ contains
         ! backtracking loop
         do
           xkp1 = xk + eta*dk
+          if ( clip_ ) then
+            xkp1 = min(max(xkp1,-one),one)
+          end if
           call this%pt_dist_fun(xyz_point,xkp1,fkp1,dfval=dfkp1)
           wc1 = fkp1 <= fk + c1_*eta*dot_product(dfk,dk)
           ! wc2 = abs( dot_product(dfkp1,dk) ) <= c2_*abs( dot_product(dfk,dk) )
@@ -4649,6 +4666,8 @@ contains
       dist = fk
       if (present(xyz_eval) ) xyz_eval = this%pt_interp(xk)
     end if
+
+    if ( present(iter) ) iter = k
 
   end subroutine min_distance
 
@@ -5433,6 +5452,7 @@ module grid_derived_type
     procedure, public, pass :: set_nodes => set_grid_block_nodes
     procedure, public, pass :: get_cell_nodes
     procedure, public, pass :: get_fg_volume_nodes, get_fg_face_nodes, get_wall_distance_vec
+    procedure, public, pass :: get_candidate_faces, get_min_distance
     procedure, public, pass :: destroy   => deallocate_grid_block
   end type grid_block
 
@@ -5474,7 +5494,7 @@ contains
     integer, dimension(3), intent(in) :: idx
     real(dp), dimension(gblock%n_skip(1)+1,gblock%n_skip(2)+1,gblock%n_skip(3)+1,3), intent(out) :: volume_nodes
     integer, dimension(4) :: tmp
-    integer, dimension(3) :: bnd_min, bnd_max, sz, skip, stride
+    integer, dimension(3) :: bnd_min, bnd_max, sz, skip, stride, c_idx
     tmp = lbound(gblock%node_coords)
     bnd_min = tmp(2:4)
     tmp = ubound(gblock%node_coords)
@@ -5483,7 +5503,8 @@ contains
     sz     = gblock%n_skip+1
     skip   = gblock%n_skip
     stride = 1
-    volume_nodes = get_cell_node_coords_vol( idx, sz, skip, stride, bnd_min, bnd_max, gblock%node_coords )
+    c_idx  = (idx - 1)*skip + 1
+    volume_nodes = get_cell_node_coords_vol( c_idx, sz, skip, stride, bnd_min, bnd_max, gblock%node_coords )
   end subroutine get_fg_volume_nodes
 
   pure subroutine get_fg_face_nodes(gblock,idx,shp,dir,face_nodes)
@@ -5493,7 +5514,7 @@ contains
     integer,               intent(in)    :: dir
     real(dp), dimension(shp(1),shp(2),3), optional, intent(out) :: face_nodes
     integer, dimension(4) :: tmp
-    integer, dimension(3) :: bnd_min, bnd_max, sz, skip, stride
+    integer, dimension(3) :: bnd_min, bnd_max, sz, skip, stride, c_idx
     integer, dimension(2) :: shp2
     tmp = lbound(gblock%node_coords)
     bnd_min = tmp(2:4)
@@ -5503,7 +5524,8 @@ contains
     sz     = gblock%n_skip+1
     skip   = gblock%n_skip
     stride = 1
-    call get_cell_node_coords_face( idx, shp, skip, stride, dir, bnd_min, bnd_max, gblock%node_coords, coords_out=face_nodes )
+    c_idx  = (idx - 1)*skip + 1
+    call get_cell_node_coords_face( c_idx, shp, skip, stride, dir, bnd_min, bnd_max, gblock%node_coords, coords_out=face_nodes )
   end subroutine get_fg_face_nodes
 
   pure function get_cell_node_coords_vol( idx, shp, skip, stride, bnd_min, bnd_max, coords_in )   &
@@ -5619,7 +5641,7 @@ contains
     integer,                                          intent(in)  :: dir
     real(dp), dimension(3),                           intent(in)  :: xyz_point
     integer,                                          intent(in)  :: n_iter
-    real(dp), dimension(3,n_iter+2) :: out_vec
+    real(dp), dimension(3,n_iter+3) :: out_vec
     real(dp), dimension(3) :: xyz_eval
     integer, dimension(2) :: shp
     real(dp), dimension(:,:,:), allocatable :: face_nodes
@@ -5643,11 +5665,144 @@ contains
       call interp%min_distance(xyz_point,uv,dist_cmp,xyz_eval=xyz_eval,max_iter=1,status=status)
       out_vec(:,i+2) = xyz_eval
     end do
+    out_vec(:,n_iter+3) = xyz_point
 
     call interp%destroy()
     deallocate( face_nodes )
   end function get_wall_distance_vec
 
+  pure subroutine get_candidate_faces(gblock,bnd_num,xyz_point,node_idx,n_faces,cell_idxs,min_dist)
+    use set_constants, only : large
+    use index_conversion, only : in_bound
+    class(grid_block),        intent(in)  :: gblock
+    integer,                  intent(in)  :: bnd_num
+    real(dp), dimension(3),   intent(in)  :: xyz_point
+    integer,  dimension(3),   intent(out) :: node_idx
+    integer,                  intent(out) :: n_faces
+    integer,  dimension(3,4), intent(out) :: cell_idxs
+    real(dp),                 intent(out) :: min_dist
+    integer, dimension(3) :: lo, hi, stride, offset, idx
+    integer :: i,j,k
+    real(dp), dimension(3) :: coord
+    real(dp) :: dist
+    ! loop over all face nodes on face specified by bnd_num, and find closest node
+    lo    = 1
+    hi    = (gblock%n_nodes-1)/gblock%n_skip + 1
+    stride = gblock%n_skip
+    offset = 1
+    select case(bnd_num)
+    case(-1) ! xi_min  
+      hi(1)     = 1
+      stride(1) = 1
+      offset(1) = 0
+    case(1) ! xi_max
+      lo(1)     = hi(1)
+      stride(1) = 1
+      offset(1) = 0
+    case(-2) ! eta_min
+      hi(2)     = 1
+      stride(2) = 1
+      offset(2) = 0
+    case(2) ! eta_max
+      lo(2)     = hi(2)
+      stride(2) = 1
+      offset(2) = 0
+    case(-3) ! zeta_min
+      hi(3)     = 1
+      stride(3) = 1
+      offset(3) = 0
+    case(3) ! zeta_max
+      lo(3)     = hi(3)
+      stride(3) = 1
+      offset(3) = 0
+    end select
+    min_dist = large
+    node_idx  = 1
+    do k = lo(3),hi(3),stride(3)
+      do j = lo(2),hi(2),stride(2)
+        do i = lo(1),hi(1),stride(1)
+          coord = gblock%node_coords(:,i,j,k)
+          dist  = norm2(xyz_point-coord)
+          if ( dist < min_dist ) then
+            min_dist = dist
+            node_idx = [i,j,k]
+          end if
+        end do
+      end do
+    end do
+
+    ! change to cell indexing
+    lo    = [1,1,1]
+    hi    = (gblock%n_nodes-1)/gblock%n_skip
+    cell_idxs = 1
+    ! now get the indices of the cells adjacent to this node:
+    n_faces = 0
+    do k = -offset(3),0
+      do j = -offset(2),0
+        do i = -offset(1),0
+          idx = node_idx + [i,j,k]
+          if ( in_bound(3,idx,lo,hi) ) then
+            n_faces = n_faces + 1
+            cell_idxs(:,n_faces) = idx
+          end if
+        end do
+      end do
+    end do
+  end subroutine get_candidate_faces
+
+
+  pure subroutine get_min_distance(gblock,bnd_num,xyz_point,min_dist,clip,max_iter,xyz_eval,out_idx)
+    use set_constants,            only : zero, one
+    use interpolant_derived_type, only : interpolant_w_3D_data_t
+    class(grid_block),        intent(in)  :: gblock
+    integer,                  intent(in)  :: bnd_num
+    real(dp), dimension(3),   intent(in)  :: xyz_point
+    real(dp),                 intent(out) :: min_dist
+    logical,                optional, intent(in)   :: clip
+    integer,                optional, intent(in)   :: max_iter
+    real(dp), dimension(3), optional, intent(out)  :: xyz_eval
+    integer,  dimension(3), optional, intent(out)  :: out_idx
+    
+
+    integer                  :: n_faces
+    integer,  dimension(3)   :: node_idx
+    integer,  dimension(3,4) :: cell_idxs
+    integer, dimension(2) :: shp
+    real(dp), dimension(:,:,:), allocatable :: face_nodes
+    real(dp), dimension(3) :: xyz_out
+    real(dp), dimension(2) :: uv
+    real(dp) :: dist
+    integer :: i, dir, status, face_num
+    type(interpolant_w_3D_data_t) :: interp
+
+    call gblock%get_candidate_faces(bnd_num,xyz_point,node_idx,n_faces,cell_idxs,min_dist)
+    if (present(xyz_eval)) xyz_out = gblock%node_coords(:,node_idx(1),node_idx(2),node_idx(3))
+    dir = bnd_num
+    face_num = 1
+    do i = 1,n_faces
+      call gblock%get_fg_face_nodes(cell_idxs(:,i),shp,dir)
+      allocate( face_nodes(shp(1),shp(2),3) )
+      call gblock%get_fg_face_nodes(cell_idxs(:,i),shp,dir,face_nodes=face_nodes)
+      call interp%create( pack(face_nodes(:,:,1),.true.), &
+                          pack(face_nodes(:,:,2),.true.), &
+                          pack(face_nodes(:,:,3),.true.), shape(face_nodes(:,:,1)) )
+      uv = zero
+      call interp%min_distance(xyz_point,uv,dist,xyz_eval=xyz_eval,max_iter=max_iter,clip=clip,status=status)
+      call interp%destroy()
+      deallocate( face_nodes )
+      ! out of bounds in parametric space
+      if (any(abs(uv) > one) ) continue
+      if ( dist < min_dist ) then
+        min_dist = dist
+        face_num = i
+        if (present(xyz_eval)) xyz_out = xyz_eval
+      end if
+    end do
+    if (present(xyz_eval)) xyz_eval = xyz_out
+    if (present(out_idx))  out_idx  = cell_idxs(:,face_num)
+  end subroutine get_min_distance
+
+    
   ! subroutine coarsen_grid(n_skip,grid,grid_coarse)
   !   integer, dimension(3), intent(in)  :: n_skip
   !   type(grid_type),       intent(in)  :: grid
@@ -6925,13 +7080,14 @@ contains
     deallocate( var_names, NODE_DATA )
   end subroutine output_gblock
 
-  subroutine output_volume_subzone( n_dim, volume_nodes, file_name, old, strand_id, solution_time )
+  subroutine output_volume_subzone( n_dim, volume_nodes, file_name, old, zone_name, strand_id, solution_time )
     use tecplot_output, only : write_tecplot_ordered_zone_header
     use tecplot_output, only : write_tecplot_ordered_zone_block_packed
     integer,                         intent(in)    :: n_dim
     real(dp), dimension(:,:,:,:),    intent(in)    :: volume_nodes
     character(*),                    intent(in)    :: file_name
     logical,                         intent(inout) :: old
+    character(*),          optional, intent(in)    :: zone_name
     integer,               optional, intent(in)    :: strand_id
     real(dp),              optional, intent(in)    :: solution_time
     integer,  dimension(n_dim) :: n_nodes
@@ -6940,7 +7096,6 @@ contains
     real(dp), dimension(:,:), allocatable :: NODE_DATA
     character(*), dimension(3), parameter :: xyz        = ['x','y','z']
     character(100), dimension(:), allocatable :: var_names
-    character(100) :: zone_name, tmp_name
     integer, dimension(4) :: tmp
     integer, dimension(3) :: lo,hi
 
@@ -6960,8 +7115,6 @@ contains
 
     allocate( var_names( n_vars ) )
     allocate( NODE_DATA( n_node_vars, product(n_nodes) ) )
-
-    write(zone_name,'(A)') "'SUBZONE'"
 
     ! if (n_dim==1) then
     !   write(zone_name,'(A)') "('CELL:(',I0,',[',I0,'])')"
@@ -7013,13 +7166,14 @@ contains
     deallocate( var_names, NODE_DATA )
   end subroutine output_volume_subzone
 
-  subroutine output_face_subzone( n_dim, face_nodes, file_name, old, strand_id, solution_time )
+  subroutine output_face_subzone( n_dim, face_nodes, file_name, old, zone_name, strand_id, solution_time )
     use tecplot_output, only : write_tecplot_ordered_zone_header
     use tecplot_output, only : write_tecplot_ordered_zone_block_packed
     integer,                         intent(in)    :: n_dim
     real(dp), dimension(:,:,:),      intent(in)    :: face_nodes
     character(*),                    intent(in)    :: file_name
     logical,                         intent(inout) :: old
+    character(*),          optional, intent(in)    :: zone_name
     integer,               optional, intent(in)    :: strand_id
     real(dp),              optional, intent(in)    :: solution_time
     integer,  dimension(n_dim-1) :: n_nodes
@@ -7028,7 +7182,6 @@ contains
     real(dp), dimension(:,:), allocatable :: NODE_DATA
     character(*), dimension(3), parameter :: xyz        = ['x','y','z']
     character(100), dimension(:), allocatable :: var_names
-    character(100) :: zone_name, tmp_name
     integer, dimension(3) :: tmp
     integer, dimension(2) :: lo,hi
 
@@ -7048,8 +7201,6 @@ contains
 
     allocate( var_names( n_vars ) )
     allocate( NODE_DATA( n_node_vars, product(n_nodes) ) )
-
-    write(zone_name,'(A)') "'SUBZONE'"
 
     cnt = 0
     do i = 1,n_dim
@@ -7092,13 +7243,14 @@ contains
     deallocate( var_names, NODE_DATA )
   end subroutine output_face_subzone
 
-  subroutine output_line_subzone( n_dim, nodes, file_name, old, strand_id, solution_time )
+  subroutine output_line_subzone( n_dim, nodes, file_name, old, zone_name, strand_id, solution_time )
     use tecplot_output, only : write_tecplot_ordered_zone_header
     use tecplot_output, only : write_tecplot_ordered_zone_block_packed
     integer,                         intent(in)    :: n_dim
     real(dp), dimension(:,:),        intent(in)    :: nodes
     character(*),                    intent(in)    :: file_name
     logical,                         intent(inout) :: old
+    character(*),          optional, intent(in)    :: zone_name
     integer,               optional, intent(in)    :: strand_id
     real(dp),              optional, intent(in)    :: solution_time
     integer,  dimension(1) :: n_nodes
@@ -7107,7 +7259,6 @@ contains
     real(dp), dimension(:,:), allocatable :: NODE_DATA
     character(*), dimension(3), parameter :: xyz        = ['x','y','z']
     character(100), dimension(:), allocatable :: var_names
-    character(100) :: zone_name, tmp_name
     integer :: lo,hi
 
     integer :: n_vars, n_node_vars, n_cell_vars
@@ -7124,8 +7275,6 @@ contains
 
     allocate( var_names( n_vars ) )
     allocate( NODE_DATA( n_node_vars, product(n_nodes) ) )
-
-    write(zone_name,'(A)') "'SUBZONE'"
 
     cnt = 0
     do i = 1,n_dim
@@ -7188,6 +7337,7 @@ end module test_problem
 program main
   use set_precision, only : dp
   use set_constants, only : zero, one, three, pi
+  use math,          only : rand_coord_in_range
   use test_problem,  only : setup_grid, geom_space_wrapper, output_grid, output_volume_subzone, output_face_subzone, output_line_subzone
   use grid_derived_type, only : grid_type
   use timer_derived_type, only : basic_timer_t
@@ -7201,79 +7351,105 @@ program main
   real(dp), dimension(:,:,:,:), allocatable :: volume_nodes
   real(dp), dimension(:,:,:),   allocatable :: face_nodes
   real(dp), dimension(:,:),     allocatable :: out_vec
-  real(dp), dimension(3) :: pt
+  real(dp), dimension(3) :: pt, xyz_eval
   integer, dimension(3) :: cell_idx
   integer, dimension(2) :: shp
-  integer :: dir, n_iter
+  real(dp) :: min_dist
+  integer :: bnd_num, n_iter, n_pts, n
   logical :: old
+  character(100) :: zone_name
+  character(*), parameter :: file_name='TEST_GRID.dat'
   n_dim   = 3
-  n_nodes = [17,17,9]
+  n_nodes = [17,17,17]
   n_ghost = [0,0,0]
   n_skip  = [2,2,2]
 
-  cell_idx = [1,1,2]
-  n_iter   = 10
+  n_iter   = 100
+  bnd_num  = -1
+  n_pts = 25
   
   call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
 
-  call output_grid( grid, 'TEST_GRID' )
-
-  allocate( volume_nodes( grid%gblock(1)%n_skip(1)+1, &
-                          grid%gblock(1)%n_skip(2)+1, &
-                          grid%gblock(1)%n_skip(3)+1, &
-                          3 ) )
-  
-  call grid%gblock(1)%get_fg_volume_nodes(cell_idx,volume_nodes)
-
+  call output_grid( grid, file_name )
   old = .true.
-  call output_volume_subzone(n_dim,volume_nodes,'TEST_GRID',old)
 
-  deallocate( volume_nodes )
+  allocate(out_vec(3,2))
+  do n = 1,n_pts
+    pt = rand_coord_in_range(3,[-one,-one,-one],[three,three,three])
+    call grid%gblock(1)%get_min_distance(bnd_num,pt,min_dist,max_iter=n_iter,xyz_eval=xyz_eval,clip=.true.,out_idx=cell_idx)
+    write(*,'(A,3(ES23.15),A,ES23.15)') 'pt = ',pt,' Minimum distance = ', min_dist
 
-  dir = -1
-  call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
-  allocate( face_nodes(shp(1),shp(2),3) )
-  call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
-  call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
-  deallocate( face_nodes )
-
-  pt = [three*cos(pi/32.0_dp),three*sin(pi/32.0_dp),one]
-  allocate(out_vec(3,n_iter+2))
-  out_vec = grid%gblock(1)%get_wall_distance_vec(cell_idx,dir,pt,n_iter)
-  call output_line_subzone(n_dim,out_vec,'TEST_GRID',old)
+    call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
+    allocate( face_nodes(shp(1),shp(2),3) )
+    call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
+    write(zone_name,'(A,I0)') 'FACE:',n
+    call output_face_subzone(n_dim,face_nodes,file_name,old,zone_name=trim(zone_name))
+    deallocate( face_nodes )
+  
+    out_vec(:,1) = pt
+    out_vec(:,2) = xyz_eval
+    write(zone_name,'(A,I0)') 'PT:',n
+    call output_line_subzone(n_dim,out_vec,file_name,old,zone_name=trim(zone_name))
+  end do
   deallocate( out_vec )
-  ! dir = 1
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+
+  ! cell_idx = [1,1,4]
+  ! allocate( volume_nodes( grid%gblock(1)%n_skip(1)+1, &
+  !                         grid%gblock(1)%n_skip(2)+1, &
+  !                         grid%gblock(1)%n_skip(3)+1, &
+  !                         3 ) )
+  
+  ! call grid%gblock(1)%get_fg_volume_nodes(cell_idx,volume_nodes)
+
+
+  ! call output_volume_subzone(n_dim,volume_nodes,'TEST_GRID',old)
+
+  ! deallocate( volume_nodes )
+
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
   ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
   ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
   ! deallocate( face_nodes )
 
-  ! dir = -2
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+  ! pt = [three*cos(pi/32.0_dp),three*sin(pi/32.0_dp),one]
+  ! allocate(out_vec(3,n_iter+3))
+  ! out_vec = grid%gblock(1)%get_wall_distance_vec(cell_idx,bnd_num,pt,n_iter)
+  ! call output_line_subzone(n_dim,out_vec,'TEST_GRID',old)
+  ! deallocate( out_vec )
+
+  ! bnd_num = 1
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
   ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
   ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
   ! deallocate( face_nodes )
 
-  ! dir = 2
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+  ! bnd_num = -2
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
   ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
   ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
   ! deallocate( face_nodes )
 
-  ! dir = -3
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+  ! bnd_num = 2
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
   ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
   ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
   ! deallocate( face_nodes )
 
-  ! dir = 3
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir)
+  ! bnd_num = -3
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
   ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,dir,face_nodes=face_nodes)
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
+  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
+  ! deallocate( face_nodes )
+
+  ! bnd_num = 3
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
+  ! allocate( face_nodes(shp(1),shp(2),3) )
+  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
   ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
   ! deallocate( face_nodes )
 
