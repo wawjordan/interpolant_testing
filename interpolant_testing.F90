@@ -4550,9 +4550,12 @@ contains
   end subroutine pt_dist_fun
 
 
-  pure subroutine min_distance(this,xyz_point,pt,dist,xyz_eval,iter,max_iter,gamma,c1,c2,step_tol,fun_tol,clip,status)
+  pure subroutine min_distance( this, xyz_point, pt, dist, xyz_eval, iter,     &
+                                max_iter, gamma, c1, c2, optim_tol_abs,        &
+                                optim_tol_rel, step_tol_abs, step_tol_rel,     &
+                                fun_tol_abs, fun_tol_rel, clip, status )
     use math,          only : linear_solve
-    use set_constants, only : zero, one, two, four
+    use set_constants, only : near_zero, zero, one, two, four
     class(interpolant_w_3D_data_t),   intent(in)    :: this
     real(dp), dimension(3),           intent(in)    :: xyz_point
     real(dp), dimension(:),           intent(inout) :: pt
@@ -4560,13 +4563,17 @@ contains
     real(dp), dimension(3), optional, intent(out)   :: xyz_eval
     integer,                optional, intent(out)   :: iter
     integer,                optional, intent(in)    :: max_iter
-    real(dp),               optional, intent(in)    :: gamma, c1, c2, step_tol, fun_tol
+    real(dp),               optional, intent(in)    :: gamma, c1, c2
+    real(dp),               optional, intent(in)    :: optim_tol_abs, optim_tol_rel
+    real(dp),               optional, intent(in)    :: step_tol_abs, step_tol_rel
+    real(dp),               optional, intent(in)    :: fun_tol_abs, fun_tol_rel
     logical,                optional, intent(in)    :: clip
     integer,                optional, intent(out)   :: status
     real(dp), dimension(this%n_dim) :: dk, xk, xkp1, dfk, dfkp1
     real(dp), dimension(this%n_dim,this%n_dim) :: d2fk
-    real(dp) :: fk, fkp1, eta, gamma_, c1_, c2_, stol, ftol, ef, es
-    
+    real(dp) :: dfk0norm, dk0norm, fk0, fk, fkp1, eta, gamma_, c1_, c2_
+    real(dp) :: opttola, opttolr, stola, stolr, ftola, ftolr
+    real(dp) :: opta,    optr,    esa,   esr,   efa,   efr
     integer :: k, max_iter_
     logical  :: wc1, wc2, converged, clip_
     real(dp), parameter :: h = 1.0e-6_dp
@@ -4592,16 +4599,30 @@ contains
     c2_ = 0.1_dp
     if ( present(c2) ) c2_ = c2
 
-    stol = 1.0e-15_dp
-    if ( present(step_tol) ) stol = step_tol
+    opttola = 1.0e-15_dp
+    if ( present(optim_tol_abs) ) opttola = optim_tol_abs
 
-    ftol = 1.0e-12_dp
-    if ( present(fun_tol) ) ftol = fun_tol
+    opttolr = 1.0e-10_dp
+    if ( present(optim_tol_rel) ) opttolr = optim_tol_rel
+
+    stola = 1.0e-15_dp
+    if ( present(step_tol_abs) ) stola = step_tol_abs
+
+    stolr = 1.0e-15_dp
+    if ( present(step_tol_rel) ) stolr = step_tol_rel
+
+    ftola = 1.0e-15_dp
+    if ( present(fun_tol_abs) ) ftola = fun_tol_abs
+
+    ftolr = 1.0e-10_dp
+    if ( present(fun_tol_rel) ) ftolr = fun_tol_rel
 
     clip_ = .false.
     if (present(clip)) clip_ = clip
 
     xk = pt(1:this%n_dim)
+
+    eta = one
     
     
     ! f__ = norm2( this%pt_interp(xk + [0.0_dp,0.0_dp]) - xyz_point )
@@ -4626,38 +4647,69 @@ contains
     dist = fk
     k = 1
     if ( dist > zero) then
+      call this%pt_dist_fun(xyz_point,xk,fk,dfval=dfk,d2fval=d2fk)
+      call linear_solve(-d2fk,dfk,dk,status=status)
+
+      fk0      = fk
+      dk0norm  = norm2(dk)
+      dfk0norm = maxval(abs(dfk))
+
       do k = 1,max_iter_
-        call this%pt_dist_fun(xyz_point,xk,fk,dfval=dfk,d2fval=d2fk)
         
-        eta = one
+        eta = min(one,1.1_dp*eta)
         call linear_solve(-d2fk,dfk,dk,status=status)
         
         ! backtracking loop
         do
+          
           xkp1 = xk + eta*dk
           if ( clip_ ) then
-            xkp1 = min(max(xkp1,-one),one)
+            xkp1 = min(max(xkp1,-one-h),one+h)
           end if
+
+          esa = norm2(xkp1-xk) ! calculate change in step size
+          if (esa<stola) then
+            exit
+          end if
+
           call this%pt_dist_fun(xyz_point,xkp1,fkp1,dfval=dfkp1)
+
+          ! Wolfe conditions
           wc1 = fkp1 <= fk + c1_*eta*dot_product(dfk,dk)
-          ! wc2 = abs( dot_product(dfkp1,dk) ) <= c2_*abs( dot_product(dfk,dk) )
-          wc2 = dot_product(dfkp1,dk) >= c2_*dot_product(dfk,dk)
-          if ( wc1.and.wc2 ) exit
-          if ( eta < h ) exit
+          wc2 = abs( dot_product(dfkp1,dk) ) <= c2_*abs( dot_product(dfk,dk) )
+          ! wc2 = dot_product(dfkp1,dk) >= c2_*dot_product(dfk,dk)
+          ! if ( wc1 ) then
+          !   exit
+          ! end if
+          if ( wc1.and.wc2 ) then
+            exit
+          end if
           eta = gamma_*eta ! calculate new eta
         end do
 
+        ! 1st order optimality measure
+        opta = maxval(abs(dfk))
+        optr = opta / (dfk0norm + near_zero)
 
-        es = norm2(dk)         ! calculate change in step size
-        ef = abs(fkp1 - fk)    ! calculate change in function
+        ! step length measure 
+        esa = norm2(xkp1-xk)         ! calculate change in step size
+        esr = esa/(one + norm2(xk))
 
-        xk = xkp1
-        fk = fkp1
-
-        converged = ( (ef<ftol).and.(es<stol) )
+        ! function value measure
+        efa = abs(fkp1 - fk)    ! calculate change in function
+        efr = efa/(one+abs(fk))
+        converged = (optr<opttolr).and.(esr<stolr).and.(efr<ftolr)
+        converged = converged.or.( (opta<opttola).and.(efa<ftola).and.(esa<stola) )
         if ( converged ) then
           exit
         end if
+
+        ! save the last step
+        xk = xkp1
+
+        ! take the next step
+        call this%pt_dist_fun(xyz_point,xk,fk,dfval=dfk,d2fval=d2fk)
+        
       end do
 
       ! output
@@ -5687,7 +5739,7 @@ contains
     real(dp) :: dist
     ! loop over all face nodes on face specified by bnd_num, and find closest node
     lo    = 1
-    hi    = (gblock%n_nodes-1)/gblock%n_skip + 1
+    hi    =  gblock%n_nodes
     stride = gblock%n_skip
     offset = 1
     select case(bnd_num)
@@ -5740,7 +5792,7 @@ contains
     do k = -offset(3),0
       do j = -offset(2),0
         do i = -offset(1),0
-          idx = node_idx + [i,j,k]
+          idx = (node_idx-1)/gblock%n_skip + 1  + [i,j,k]
           if ( in_bound(3,idx,lo,hi) ) then
             n_faces = n_faces + 1
             cell_idxs(:,n_faces) = idx
@@ -7336,12 +7388,13 @@ end module test_problem
 
 program main
   use set_precision, only : dp
-  use set_constants, only : zero, one, two, three, pi
+  use set_constants, only : zero, one, two, three, pi, half, fourth
   use math,          only : rand_coord_in_range
   use test_problem,  only : setup_grid, geom_space_wrapper, output_grid, output_volume_subzone, output_face_subzone, output_line_subzone
   use grid_derived_type, only : grid_type
   use timer_derived_type, only : basic_timer_t
   use project_inputs, only : n_dim, n_nodes, n_ghost, n_skip
+  use linspace_helper, only : sphere_mesh
 
   implicit none
 
@@ -7351,6 +7404,7 @@ program main
   real(dp), dimension(:,:,:,:), allocatable :: volume_nodes
   real(dp), dimension(:,:,:),   allocatable :: face_nodes
   real(dp), dimension(:,:),     allocatable :: out_vec
+  real(dp), dimension(:,:),     allocatable :: pts
   real(dp), dimension(3) :: pt, xyz_eval
   integer, dimension(3) :: cell_idx
   integer, dimension(2) :: shp
@@ -7360,34 +7414,39 @@ program main
   character(100) :: zone_name
   character(*), parameter :: file_name='TEST_GRID.dat'
   n_dim   = 3
-  n_nodes = [17,17,17]
+  n_nodes = [9,17,17]
   n_ghost = [0,0,0]
   n_skip  = [2,2,2]
 
   n_iter   = 100
   bnd_num  = -1
-  n_pts = 25
+  n_pts = 17
   
   call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
+
+  allocate( pts(3,n_pts*n_pts) )
+
+  pts = reshape(sphere_mesh(1,n_pts,n_pts,reshape([three,zero,fourth*pi,three,half*pi,three*fourth*pi],[3,2])),[3,n_pts*n_pts])
 
   call output_grid( grid, file_name )
   old = .true.
 
   allocate(out_vec(3,2))
-  do n = 1,n_pts
-    pt = rand_coord_in_range(3,[two,two,two],[three,three,three])
-    ! [three*cos(pi/32.0_dp),three*sin(pi/32.0_dp),one]
-    call grid%gblock(1)%get_min_distance(bnd_num,pt,min_dist,max_iter=n_iter,xyz_eval=xyz_eval,clip=.false.,out_idx=cell_idx)
-    ex = norm2(pt)-sqrt(two)
+  do n = 18,n_pts*n_pts
+    ! pt = rand_coord_in_range(3,[two,two,two],[three,three,three])
+    pt = pts(:,n)
+    ! pt = [2.3749641296722843_dp,1.8223740721795063_dp,-0.19620938769042878_dp]
+    call grid%gblock(1)%get_min_distance(bnd_num,pt,min_dist,max_iter=100,xyz_eval=xyz_eval,clip=.false.,out_idx=cell_idx)
+    ex = norm2(pt)-one
     err = ex - min_dist
     write(*,'(A,3(ES16.7),A,ES16.7,A,ES16.7)') 'pt = ',pt,' Min. distance = ', min_dist, ' Error: ', err
 
-    call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
-    allocate( face_nodes(shp(1),shp(2),3) )
-    call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
-    write(zone_name,'(A,I0)') 'FACE:',n
-    call output_face_subzone(n_dim,face_nodes,file_name,old,zone_name=trim(zone_name))
-    deallocate( face_nodes )
+    ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
+    ! allocate( face_nodes(shp(1),shp(2),3) )
+    ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
+    ! write(zone_name,'(A,I0)') 'FACE:',n
+    ! call output_face_subzone(n_dim,face_nodes,file_name,old,zone_name=trim(zone_name))
+    ! deallocate( face_nodes )
   
     out_vec(:,1) = pt
     out_vec(:,2) = xyz_eval
@@ -7395,7 +7454,7 @@ program main
     call output_line_subzone(n_dim,out_vec,file_name,old,zone_name=trim(zone_name))
   end do
   deallocate( out_vec )
-
+  deallocate( pts )
   ! cell_idx = [1,1,4]
   ! allocate( volume_nodes( grid%gblock(1)%n_skip(1)+1, &
   !                         grid%gblock(1)%n_skip(2)+1, &
