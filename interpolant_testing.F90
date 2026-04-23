@@ -7420,7 +7420,7 @@ program main
 
   n_iter   = 100
   bnd_num  = -1
-  n_pts = 17
+  n_pts = 33
   
   call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
 
@@ -7432,7 +7432,7 @@ program main
   old = .true.
 
   allocate(out_vec(3,2))
-  do n = 18,n_pts*n_pts
+  do n = 1,n_pts*n_pts
     ! pt = rand_coord_in_range(3,[two,two,two],[three,three,three])
     pt = pts(:,n)
     ! pt = [2.3749641296722843_dp,1.8223740721795063_dp,-0.19620938769042878_dp]
