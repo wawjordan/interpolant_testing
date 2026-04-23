@@ -2365,6 +2365,23 @@ contains
     call LUsolve_single_rhs( x, LU, P, b, m )
   end subroutine linear_solve_LU
 
+  pure subroutine linear_solve_1x1(A,b,x,status)
+    use set_constants, only : zero
+    real(dp), dimension(1,1), intent(in)  :: A
+    real(dp), dimension(1),   intent(in)  :: b
+    real(dp), dimension(1),   intent(out) :: x
+    integer,  optional,       intent(out) :: status
+    real(dp) :: det
+    if ( present(status) ) status = 0
+    x = b
+    det = A(1,1)
+    if ( abs(det) > zero ) then
+      x = b/det
+    else
+      if ( present(status) ) status = -1
+    end if
+  end subroutine linear_solve_1x1
+
   pure subroutine linear_solve_2x2(A,b,x,status)
     use set_constants, only : zero
     real(dp), dimension(2,2), intent(in)  :: A
@@ -2435,7 +2452,8 @@ contains
 
     select case(m)
     case(1)
-      x(1) = b(1)/A(1,1)
+      ! x(1) = b(1)/A(1,1)
+      call linear_solve_1x1(A,b,x,status=status)
     case(2)
       call linear_solve_2x2(A,b,x,status=status)
     case default
@@ -3708,9 +3726,10 @@ contains
     integer,  dimension(:),         intent(in) :: shp
     integer,  dimension(3) :: shp_
     call this%destroy()
-    this%n_dim = size(shp)
+    ! this%n_dim = size(shp)
+    this%n_dim = count(shp>1)
     shp_ = 1
-    shp_(1:this%n_dim) = shp
+    shp_(1:this%n_dim) = shp(1:this%n_dim)
     this%Npts = shp_
     this%interpolant_t = interpolant_t(n=maxval(shp_))
     
@@ -4367,8 +4386,8 @@ contains
     real(dp),               intent(in)  :: pt
     real(dp), dimension(3), intent(in)  :: xyz_pt
     real(dp),               intent(out) :: fval
-    real(dp),     optional, intent(out) :: dfval
-    real(dp),     optional, intent(out) :: d2fval
+    real(dp), dimension(1),   optional, intent(out) :: dfval
+    real(dp), dimension(1,1), optional, intent(out) :: d2fval
     real(dp), dimension(3) :: grad
     real(dp), dimension(3) :: hess
     real(dp) :: L, A, A11
@@ -4538,10 +4557,11 @@ contains
     real(dp),               intent(out)   :: fval
     real(dp), dimension(this%n_dim),            optional, intent(out) :: dfval
     real(dp), dimension(this%n_dim,this%n_dim), optional, intent(out) :: d2fval
+    real(dp) :: tmp1, tmp2
 
     select case(size(pt))
     case(1)
-      call curv_pt_dist_fun( this%interpolant_t, this%X1(:,1,1),this%X2(:,1,1),this%X3(:,1,1),pt(1),xyz_pt,fval,dfval=dfval(1),d2fval=d2fval(1,1) )
+      call curv_pt_dist_fun( this%interpolant_t, this%X1(:,1,1),this%X2(:,1,1),this%X3(:,1,1),pt(1),xyz_pt,fval,dfval=dfval,d2fval=d2fval )
     case(2)
       call surf_pt_dist_fun( this%interpolant_t, this%X1(:,:,1),this%X2(:,:,1),this%X3(:,:,1),pt,xyz_pt,fval,dfval=dfval,d2fval=d2fval )
     case(3)
@@ -5733,15 +5753,15 @@ contains
     integer,                  intent(out) :: n_faces
     integer,  dimension(3,4), intent(out) :: cell_idxs
     real(dp),                 intent(out) :: min_dist
-    integer, dimension(3) :: lo, hi, stride, offset, idx
-    integer :: i,j,k
+    integer, dimension(3) :: lo, hi, stride, offset, idx, tmp
+    integer :: i,j,k,n
     real(dp), dimension(3) :: coord
     real(dp) :: dist
     ! loop over all face nodes on face specified by bnd_num, and find closest node
     lo    = 1
     hi    =  gblock%n_nodes
-    stride = gblock%n_skip
-    offset = 1
+    stride = 1; stride(1:gblock%n_dim) = gblock%n_skip(1:gblock%n_dim)
+    offset = 0; offset(1:gblock%n_dim) = 1
     select case(bnd_num)
     case(-1) ! xi_min  
       hi(1)     = 1
@@ -5784,15 +5804,22 @@ contains
     end do
 
     ! change to cell indexing
-    lo    = [1,1,1]
-    hi    = (gblock%n_nodes-1)/gblock%n_skip
+    lo    = 1
+    hi    = 1
+    do n = 1,gblock%n_dim
+      hi(n)    = (gblock%n_nodes(n)-1)/gblock%n_skip(n)
+    end do
     cell_idxs = 1
     ! now get the indices of the cells adjacent to this node:
     n_faces = 0
     do k = -offset(3),0
       do j = -offset(2),0
         do i = -offset(1),0
-          idx = (node_idx-1)/gblock%n_skip + 1  + [i,j,k]
+          tmp = [i,j,k]
+          idx = 1
+          do n = 1,gblock%n_dim
+            idx(n) = (node_idx(n)-1)/gblock%n_skip(n) + 1  + tmp(n)
+          end do
           if ( in_bound(3,idx,lo,hi) ) then
             n_faces = n_faces + 1
             cell_idxs(:,n_faces) = idx
@@ -5878,40 +5905,40 @@ contains
   !   coords_out = coords_in(:,lo1(1):hi1(1):n_skip(1),lo1(2):hi1(2):n_skip(2),lo1(3):hi1(3):n_skip(3))
   ! end subroutine coarsen_node_coords
 
-  pure function get_cell_nodes(gblock,start_idx,n_skip) result(coords_out)
-    class(grid_block),      intent(in) :: gblock
-    integer, dimension(3), intent(in) :: start_idx
-    integer, dimension(3), intent(in) :: n_skip
-    real(dp), dimension(n_skip(1)+1,n_skip(2)+1,n_skip(3)+1,3) :: coords_out
+  pure function get_cell_nodes(gblock,start_idx,shp,skip,stride) result(coords_out)
+    class(grid_block),               intent(in) :: gblock
+    integer, dimension(3),           intent(in) :: start_idx
+    integer, dimension(3),           intent(in) :: shp, skip, stride
+    real(dp), dimension(shp(1),shp(2),shp(3),3) :: coords_out
     integer, dimension(4) :: bnd_tmp
     integer, dimension(3) :: bnd_min, bnd_max
     bnd_tmp = lbound(gblock%node_coords)
     bnd_min = bnd_tmp(2:4)
     bnd_tmp = ubound(gblock%node_coords)
     bnd_max = bnd_tmp(2:4)
-    coords_out = cell_node_coords( start_idx, n_skip, bnd_min, bnd_max,        &
+    coords_out = cell_node_coords( start_idx, shp, skip, stride, bnd_min, bnd_max,        &
                                    gblock%node_coords )
   end function get_cell_nodes
 
-  pure function cell_node_coords( idx, stride, bnd_min, bnd_max, coords_in )   &
+  pure function cell_node_coords( idx, shp, skip, stride, bnd_min, bnd_max, coords_in )   &
                                                              result(coords_out)
-    integer, dimension(3),                            intent(in)  :: idx
-    integer, dimension(3),                            intent(in)  :: stride
-    integer, dimension(3),                            intent(in)  :: bnd_min
-    integer, dimension(3),                            intent(in)  :: bnd_max
+    integer, dimension(3),                            intent(in) :: idx
+    integer, dimension(3),                            intent(in) :: shp, skip, stride
+    integer, dimension(3),                            intent(in) :: bnd_min
+    integer, dimension(3),                            intent(in) :: bnd_max
     real(dp), dimension( 3, bnd_min(1):bnd_max(1), &
                             bnd_min(2):bnd_max(2), &
-                            bnd_min(3):bnd_max(3) ), intent(in)  :: coords_in
-    real(dp), dimension(stride(1)+1,stride(2)+1,stride(3)+1,3)   :: coords_out
+                            bnd_min(3):bnd_max(3) ),  intent(in) :: coords_in
+    real(dp), dimension(shp(1),shp(2),shp(3),3)                  :: coords_out
     integer :: i,j,k,ii,jj,kk
     kk = 0
-    do k = idx(3),idx(3)+stride(3)
+    do k = idx(3),idx(3)+skip(3),stride(3)
       kk = kk + 1
       jj = 0
-      do j = idx(2),idx(2)+stride(2)
+      do j = idx(2),idx(2)+skip(2),stride(2)
         jj = jj + 1
         ii = 0
-        do i = idx(1),idx(1)+stride(1)
+        do i = idx(1),idx(1)+skip(1),stride(1)
           ii = ii + 1
           coords_out(ii,jj,kk,1) = coords_in(1,i,j,k)
           coords_out(ii,jj,kk,2) = coords_in(2,i,j,k)
@@ -5944,7 +5971,7 @@ contains
     this%n_nodes = 1; this%n_nodes(1:n_dim) = n_nodes(1:n_dim)
     this%n_ghost = n_ghost
     this%n_cells = 1; this%n_cells(1:n_dim) = n_nodes(1:n_dim) - 1
-    this%n_skip  = 1
+    this%n_skip  = 0
     if ( present(n_skip) ) this%n_skip(1:n_dim) = n_skip(1:n_dim)
     lo = 1; lo(1:n_dim) = 1 - n_ghost(1:n_dim)
     hi = 1; hi(1:n_dim) = n_nodes(1:n_dim) + n_ghost(1:n_dim)
@@ -6067,12 +6094,13 @@ contains
     integer,                intent(in)    :: quad_order
     type(quad_t), dimension(0:3) :: ref_quads
     type(quad_t) :: tmp_quad0, tmp_quad1, tmp_quad2
-    real(dp), dimension(n_skip(1)+1,n_skip(2)+1,n_skip(3)+1,3) :: coords_tmp
-    real(dp), dimension(2,2,2,3) :: coords_tmp_g
+    real(dp), dimension(:,:,:,:), allocatable :: coords_tmp, coords_tmp_g
+    ! real(dp), dimension(n_skip(1)+1,n_skip(2)+1,n_skip(3)+1,3) :: coords_tmp
+    ! real(dp), dimension(2,2,2,3) :: coords_tmp_g
     integer,  dimension(:), allocatable :: ig_g, ig_i
     integer :: i, j, k
-    integer :: status, n_dim, szint, szgst
-    integer, dimension(3) :: loc1, loc2, idx
+    integer :: status, szint, szgst
+    integer, dimension(3) :: loc1, loc2, idx, skip, shp_c, shp_f, stride_c, stride_f
     type(interpolant_t) :: interp
     real(dp) :: volume1, volume2, diff
 
@@ -6094,12 +6122,19 @@ contains
     gblock%total_volume      = zero
     gblock%total_volume_curv = zero
 
+
+    skip = 0;   skip(1:gblock%n_dim) = n_skip(1:gblock%n_dim)
+    stride_c = 1
+    stride_f = 1; stride_f(1:gblock%n_dim) = skip(1:gblock%n_dim)
+    shp_c = (skip / stride_c) + 1
+    shp_f = (skip / stride_f) + 1
+
     ! interior
     do k = 1,gblock%n_cells(3)
       do j = 1,gblock%n_cells(2)
         do i = 1,gblock%n_cells(1)
-          coords_tmp = gblock1%get_cell_nodes([i,j,k],n_skip)
-          coords_tmp_g = gblock%get_cell_nodes([i,j,k],[1,1,1])
+          coords_tmp = gblock1%get_cell_nodes([i,j,k],shp_c,skip,stride_c)
+          coords_tmp_g = gblock%get_cell_nodes([i,j,k],shp_f,skip,stride_f)
           associate( X1  => coords_tmp(:,:,:,1), &
                      X2  => coords_tmp(:,:,:,2), &
                      X3  => coords_tmp(:,:,:,3), &
@@ -6136,7 +6171,7 @@ contains
     call get_ghost_cell_indices( gblock%n_cells, ng, ig_g, ig_i )
     do i = 1,szgst
       idx = global2local_ghost( ig_g(i), gblock%n_cells, ng )
-      coords_tmp_g = gblock%get_cell_nodes(idx,[1,1,1])
+      coords_tmp_g = gblock%get_cell_nodes([i,j,k],shp_f,skip,stride_f)
       associate( X1 => coords_tmp_g(:,:,:,1), &
                  X2 => coords_tmp_g(:,:,:,2), &
                  X3 => coords_tmp_g(:,:,:,3), &
@@ -6180,8 +6215,8 @@ contains
     do k = 1,gblock%n_cells(3)
       do j = 1,gblock%n_cells(2)
         do i = 1,1
-          coords_tmp   = gblock1%get_cell_nodes([i,j,k],n_skip)
-          coords_tmp_g = gblock%get_cell_nodes([i,j,k],[1,1,1])
+          coords_tmp = gblock1%get_cell_nodes([i,j,k],shp_c,skip,stride_c)
+          coords_tmp_g = gblock%get_cell_nodes([i,j,k],shp_f,skip,stride_f)
           associate( X1  => coords_tmp(:,:,:,1), &
                      X2  => coords_tmp(:,:,:,2), &
                      X3  => coords_tmp(:,:,:,3), &
@@ -6206,8 +6241,8 @@ contains
           end associate
         end do
         do i = 1,gblock%n_cells(1)
-          coords_tmp   = gblock1%get_cell_nodes([i,j,k],n_skip)
-          coords_tmp_g = gblock%get_cell_nodes([i,j,k],[1,1,1])
+          coords_tmp = gblock1%get_cell_nodes([i,j,k],shp_c,skip,stride_c)
+          coords_tmp_g = gblock%get_cell_nodes([i,j,k],shp_f,skip,stride_f)
           associate( X1  => coords_tmp(:,:,:,1), &
                      X2  => coords_tmp(:,:,:,2), &
                      X3  => coords_tmp(:,:,:,3), &
@@ -6234,7 +6269,11 @@ contains
       end do
     end do
 
-    ! if ( gblock%n_dim == 1) return
+    if ( gblock%n_dim == 1) then
+      if (allocated(coords_tmp))   deallocate(coords_tmp)
+      if (allocated(coords_tmp_g)) deallocate(coords_tmp_g)
+      return
+    end if
 
     ! eta-faces
     loc1 = 2
@@ -6248,8 +6287,8 @@ contains
     do k = 1,gblock%n_cells(3)
       do j = 1,1
         do i = 1,gblock%n_cells(1)
-          coords_tmp   = gblock1%get_cell_nodes([i,j,k],n_skip)
-          coords_tmp_g = gblock%get_cell_nodes([i,j,k],[1,1,1])
+          coords_tmp = gblock1%get_cell_nodes([i,j,k],shp_c,skip,stride_c)
+          coords_tmp_g = gblock%get_cell_nodes([i,j,k],shp_f,skip,stride_f)
           associate( X1  => coords_tmp(:,:,:,1), &
                      X2  => coords_tmp(:,:,:,2), &
                      X3  => coords_tmp(:,:,:,3), &
@@ -6276,8 +6315,8 @@ contains
       end do
       do j = 1,gblock%n_cells(2)
         do i = 1,gblock%n_cells(1)
-          coords_tmp   = gblock1%get_cell_nodes([i,j,k],n_skip)
-          coords_tmp_g = gblock%get_cell_nodes([i,j,k],[1,1,1])
+          coords_tmp = gblock1%get_cell_nodes([i,j,k],shp_c,skip,stride_c)
+          coords_tmp_g = gblock%get_cell_nodes([i,j,k],shp_f,skip,stride_f)
           associate( X1  => coords_tmp(:,:,:,1), &
                      X2  => coords_tmp(:,:,:,2), &
                      X3  => coords_tmp(:,:,:,3), &
@@ -6304,7 +6343,11 @@ contains
       end do
     end do
 
-    if ( gblock%n_dim == 2) return
+    if ( gblock%n_dim == 2) then
+      if (allocated(coords_tmp))   deallocate(coords_tmp)
+      if (allocated(coords_tmp_g)) deallocate(coords_tmp_g)
+      return
+    end if
 
     ! zeta-faces
     loc1 = 2
@@ -6316,8 +6359,8 @@ contains
     do k = 1,1
       do j = 1,gblock%n_cells(2)
         do i = 1,gblock%n_cells(1)
-          coords_tmp   = gblock1%get_cell_nodes([i,j,k],n_skip)
-          coords_tmp_g = gblock%get_cell_nodes([i,j,k],[1,1,1])
+          coords_tmp = gblock1%get_cell_nodes([i,j,k],shp_c,skip,stride_c)
+          coords_tmp_g = gblock%get_cell_nodes([i,j,k],shp_f,skip,stride_f)
           associate( X1  => coords_tmp(:,:,:,1), &
                      X2  => coords_tmp(:,:,:,2), &
                      X3  => coords_tmp(:,:,:,3), &
@@ -6346,8 +6389,8 @@ contains
     do k = 1,gblock%n_cells(3)
       do j = 1,gblock%n_cells(2)
         do i = 1,gblock%n_cells(1)
-          coords_tmp   = gblock1%get_cell_nodes([i,j,k],n_skip)
-          coords_tmp_g = gblock%get_cell_nodes([i,j,k],[1,1,1])
+          coords_tmp = gblock1%get_cell_nodes([i,j,k],shp_c,skip,stride_c)
+          coords_tmp_g = gblock%get_cell_nodes([i,j,k],shp_f,skip,stride_f)
           associate( X1  => coords_tmp(:,:,:,1), &
                      X2  => coords_tmp(:,:,:,2), &
                      X3  => coords_tmp(:,:,:,3), &
@@ -6375,6 +6418,8 @@ contains
     end do
 
     call ref_quads%destroy()
+    if (allocated(coords_tmp))   deallocate(coords_tmp)
+    if (allocated(coords_tmp_g)) deallocate(coords_tmp_g)
 
   end subroutine compute_quadrature_points
 
@@ -6979,7 +7024,7 @@ contains
   subroutine setup_grid_generate( n_dim, n_nodes, n_ghost, n_skip, grid, delta,        &
                                   end_pts, x1_map, x2_map, x3_map )
     use grid_derived_type,    only : grid_type
-    use linspace_helper,      only : sphere_mesh, perturb_mesh, map_1D_fun
+    use linspace_helper,      only : annulus_mesh, sphere_mesh, perturb_mesh, map_1D_fun
     integer, intent(in) :: n_dim
     integer, dimension(3), intent(in) :: n_nodes, n_ghost, n_skip
     type(grid_type),       intent(out) :: grid
@@ -6989,13 +7034,20 @@ contains
 
     call grid%setup(n_dim,1)
     call grid%gblock(1)%setup(n_dim,n_nodes,n_ghost,n_skip=n_skip)
-    call grid%gblock(1)%set_nodes( sphere_mesh(    n_nodes(1),                 &
+    ! call grid%gblock(1)%set_nodes( sphere_mesh(    n_nodes(1),                 &
+    !                                                n_nodes(2),                 &
+    !                                                n_nodes(3),                 &
+    !                                                end_pts=end_pts,            &
+    !                                                r_fun=x1_map,               &
+    !                                                theta_fun=x2_map,           &
+    !                                                phi_fun=x3_map ) )
+    call grid%gblock(1)%set_nodes( annulus_mesh(   n_nodes(1),                 &
                                                    n_nodes(2),                 &
                                                    n_nodes(3),                 &
                                                    end_pts=end_pts,            &
                                                    r_fun=x1_map,               &
-                                                   theta_fun=x2_map,               &
-                                                   phi_fun=x3_map ) )
+                                                   theta_fun=x2_map,           &
+                                                   z_fun=x3_map ) )
     if (present(delta) ) then
       call perturb_mesh( grid%gblock(1)%node_coords, delta )
     end if
@@ -7062,7 +7114,7 @@ contains
     character(*), dimension(3), parameter :: xyz        = ['x','y','z']
     character(100), dimension(:), allocatable :: var_names
     character(100) :: zone_name, tmp_name
-    integer, dimension(3) :: lo,hi
+    integer, dimension(3) :: lo,hi,stride
 
     integer :: n_dim, n_vars, n_node_vars, n_cell_vars
     integer :: fid, cnt, i, j, k
@@ -7074,7 +7126,7 @@ contains
     n_cell_vars = 0
     n_vars      = n_node_vars + n_cell_vars
 
-    n_nodes     = ( grid%gblock(blk)%n_nodes - 1 )/grid%gblock(1)%n_skip + 1
+    n_nodes     = ( grid%gblock(blk)%n_nodes(1:grid%n_dim) - 1 )/grid%gblock(1)%n_skip(1:grid%n_dim) + 1
 
     allocate( var_names( n_vars ) )
     allocate( NODE_DATA( n_node_vars, product(n_nodes) ) )
@@ -7096,9 +7148,10 @@ contains
     hi(3) = ubound( grid%gblock(blk)%node_coords,dim=4)
     
     cnt = 0
-    do k = lo(3),hi(3),grid%gblock(blk)%n_skip(3)
-      do j = lo(2),hi(2),grid%gblock(blk)%n_skip(2)
-        do i = lo(1),hi(1),grid%gblock(blk)%n_skip(1)
+    stride = 1; stride(1:grid%n_dim) = grid%gblock(blk)%n_skip(1:grid%n_dim)
+    do k = lo(3),hi(3),stride(3)
+      do j = lo(2),hi(2),stride(2)
+        do i = lo(1),hi(1),stride(1)
           cnt = cnt + 1
           NODE_DATA( 1:n_dim, cnt ) = grid%gblock(blk)%node_coords(1:n_dim,i,j,k)
         end do
@@ -7394,7 +7447,7 @@ program main
   use grid_derived_type, only : grid_type
   use timer_derived_type, only : basic_timer_t
   use project_inputs, only : n_dim, n_nodes, n_ghost, n_skip
-  use linspace_helper, only : sphere_mesh
+  use linspace_helper, only : sphere_mesh, annulus_mesh
 
   implicit none
 
@@ -7413,31 +7466,39 @@ program main
   logical :: old
   character(100) :: zone_name
   character(*), parameter :: file_name='TEST_GRID.dat'
-  n_dim   = 3
-  n_nodes = [9,17,17]
+  ! n_dim   = 3
+  ! n_nodes = [9,17,17]
+  ! n_ghost = [0,0,0]
+  ! n_skip  = [2,2,2]
+
+  n_dim   = 2
+  n_nodes = [9,17,1]
   n_ghost = [0,0,0]
-  n_skip  = [2,2,2]
+  n_skip  = [2,2,0]
 
   n_iter   = 100
-  bnd_num  = -1
+  bnd_num  = -2
   n_pts = 33
   
   call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
 
-  allocate( pts(3,n_pts*n_pts) )
+  ! allocate( pts(3,n_pts*n_pts) )
+  allocate( pts(3,n_pts) )
 
-  pts = reshape(sphere_mesh(1,n_pts,n_pts,reshape([three,zero,fourth*pi,three,half*pi,three*fourth*pi],[3,2])),[3,n_pts*n_pts])
+  ! pts = reshape(sphere_mesh(1,n_pts,n_pts,end_pts=reshape([three,zero,fourth*pi,three,half*pi,three*fourth*pi],[3,2])),[3,n_pts*n_pts])
+
+  pts = reshape(annulus_mesh(1,n_pts,1,end_pts=reshape([half,zero,zero,three,half*pi,zero],[3,2])),[3,n_pts])
 
   call output_grid( grid, file_name )
   old = .true.
 
   allocate(out_vec(3,2))
-  do n = 1,n_pts*n_pts
+  do n = 1,n_pts
     ! pt = rand_coord_in_range(3,[two,two,two],[three,three,three])
     pt = pts(:,n)
     ! pt = [2.3749641296722843_dp,1.8223740721795063_dp,-0.19620938769042878_dp]
-    call grid%gblock(1)%get_min_distance(bnd_num,pt,min_dist,max_iter=100,xyz_eval=xyz_eval,clip=.false.,out_idx=cell_idx)
-    ex = norm2(pt)-one
+    call grid%gblock(1)%get_min_distance(bnd_num,pt,min_dist,max_iter=100,xyz_eval=xyz_eval,clip=.true.,out_idx=cell_idx)
+    ex = abs(norm2(pt)-one)
     err = ex - min_dist
     write(*,'(A,3(ES16.7),A,ES16.7,A,ES16.7)') 'pt = ',pt,' Min. distance = ', min_dist, ' Error: ', err
 
