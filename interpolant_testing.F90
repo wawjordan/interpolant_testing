@@ -4575,7 +4575,7 @@ contains
                                 optim_tol_rel, step_tol_abs, step_tol_rel,     &
                                 fun_tol_abs, fun_tol_rel, clip, status )
     use math,          only : linear_solve
-    use set_constants, only : near_zero, zero, one, two, four
+    use set_constants, only : near_zero, zero, one, two, four, half
     class(interpolant_w_3D_data_t),   intent(in)    :: this
     real(dp), dimension(3),           intent(in)    :: xyz_point
     real(dp), dimension(:),           intent(inout) :: pt
@@ -4683,21 +4683,19 @@ contains
         do
           
           xkp1 = xk + eta*dk
-          if ( clip_ ) then
-            xkp1 = min(max(xkp1,-one-h),one+h)
-          end if
-
           esa = norm2(xkp1-xk) ! calculate change in step size
           if (esa<stola) then
             exit
           end if
 
+          if ( clip_ ) xkp1 = min(max(xkp1,-one-h),one+h)
+          
           call this%pt_dist_fun(xyz_point,xkp1,fkp1,dfval=dfkp1)
 
           ! Wolfe conditions
           wc1 = fkp1 <= fk + c1_*eta*dot_product(dfk,dk)
-          wc2 = abs( dot_product(dfkp1,dk) ) <= c2_*abs( dot_product(dfk,dk) )
-          ! wc2 = dot_product(dfkp1,dk) >= c2_*dot_product(dfk,dk)
+          ! wc2 = abs( dot_product(dfkp1,dk) ) <= c2_*abs( dot_product(dfk,dk) )
+          wc2 = dot_product(dfkp1,dk) >= c2_*dot_product(dfk,dk)
           ! if ( wc1 ) then
           !   exit
           ! end if
@@ -4731,6 +4729,15 @@ contains
         call this%pt_dist_fun(xyz_point,xk,fk,dfval=dfk,d2fval=d2fk)
         
       end do
+
+      if ( any( abs(xk)>one+h ) ) then
+        if ( clip_ ) then
+          xk = min(max(xk,-one-h),one+h)
+          call this%pt_dist_fun(xyz_point,xk,fk)
+        else
+          if ( present(status) ) status = 1
+        end if
+      end if
 
       ! output
       pt = 1
@@ -5870,7 +5877,7 @@ contains
       call interp%destroy()
       deallocate( face_nodes )
       ! out of bounds in parametric space
-      if (any(abs(uv) > one) ) continue
+      ! if (any(abs(uv) > one) ) continue
       if ( dist < min_dist ) then
         min_dist = dist
         face_num = i
@@ -7441,7 +7448,7 @@ end module test_problem
 
 program main
   use set_precision, only : dp
-  use set_constants, only : zero, one, two, three, pi, half, fourth
+  use set_constants, only : zero, one, two, three, pi, half, fourth, large
   use math,          only : rand_coord_in_range
   use test_problem,  only : setup_grid, geom_space_wrapper, output_grid, output_volume_subzone, output_face_subzone, output_line_subzone
   use grid_derived_type, only : grid_type
@@ -7453,16 +7460,17 @@ program main
 
   type(grid_type) :: grid
   type(basic_timer_t) :: timer
-  integer :: i
   real(dp), dimension(:,:,:,:), allocatable :: volume_nodes
   real(dp), dimension(:,:,:),   allocatable :: face_nodes
   real(dp), dimension(:,:),     allocatable :: out_vec
   real(dp), dimension(:,:),     allocatable :: pts
-  real(dp), dimension(3) :: pt, xyz_eval
+  real(dp), dimension(3) :: pt, xyz_eval, xyz_tmp
   integer, dimension(3) :: cell_idx
   integer, dimension(2) :: shp
-  real(dp) :: min_dist,ex,err
-  integer :: bnd_num, n_iter, n_pts, n
+  integer, dimension(:), allocatable :: bnd_nums
+  real(dp) :: dist, min_dist, ex, err
+  integer :: n_iter, n_pts, n_bnds
+  integer :: i, j, cnt
   logical :: old
   character(100) :: zone_name
   character(*), parameter :: file_name='TEST_GRID.dat'
@@ -7477,9 +7485,18 @@ program main
   n_skip  = [2,2,0]
 
   n_iter   = 100
-  bnd_num  = -2
   n_pts = 33
   
+  n_bnds = 2*n_dim
+  allocate( bnd_nums(n_bnds) )
+  cnt = 0
+  do j = 1,n_dim
+    do i = -1,1,2
+      cnt = cnt + 1
+      bnd_nums(cnt) = i*j
+    end do
+  end do
+
   call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
 
   ! allocate( pts(3,n_pts*n_pts) )
@@ -7487,17 +7504,27 @@ program main
 
   ! pts = reshape(sphere_mesh(1,n_pts,n_pts,end_pts=reshape([three,zero,fourth*pi,three,half*pi,three*fourth*pi],[3,2])),[3,n_pts*n_pts])
 
-  pts = reshape(annulus_mesh(1,n_pts,1,end_pts=reshape([half,zero,zero,three,half*pi,zero],[3,2])),[3,n_pts])
+  pts = reshape(annulus_mesh(1,n_pts,1,end_pts=reshape([1.5_dp,zero,zero,three,half*pi,zero],[3,2])),[3,n_pts])
 
   call output_grid( grid, file_name )
   old = .true.
 
+  
   allocate(out_vec(3,2))
-  do n = 1,n_pts
+  do j = 1,n_pts
     ! pt = rand_coord_in_range(3,[two,two,two],[three,three,three])
-    pt = pts(:,n)
+    pt = pts(:,j)
     ! pt = [2.3749641296722843_dp,1.8223740721795063_dp,-0.19620938769042878_dp]
-    call grid%gblock(1)%get_min_distance(bnd_num,pt,min_dist,max_iter=100,xyz_eval=xyz_eval,clip=.true.,out_idx=cell_idx)
+    xyz_eval = zero
+    min_dist = large
+    do i = 4,4 !1,n_bnds
+      call grid%gblock(1)%get_min_distance(bnd_nums(i),pt,dist,max_iter=n_iter,xyz_eval=xyz_tmp,clip=.true.,out_idx=cell_idx)
+      if ( dist < min_dist ) then
+        min_dist = dist
+        xyz_eval = xyz_tmp
+      end if
+    end do
+        
     ex = abs(norm2(pt)-one)
     err = ex - min_dist
     write(*,'(A,3(ES16.7),A,ES16.7,A,ES16.7)') 'pt = ',pt,' Min. distance = ', min_dist, ' Error: ', err
@@ -7511,11 +7538,12 @@ program main
   
     out_vec(:,1) = pt
     out_vec(:,2) = xyz_eval
-    write(zone_name,'(A,I0)') 'PT:',n
+    write(zone_name,'(A,I0)') 'PT:',j
     call output_line_subzone(n_dim,out_vec,file_name,old,zone_name=trim(zone_name))
   end do
   deallocate( out_vec )
   deallocate( pts )
+  deallocate( bnd_nums )
   ! cell_idx = [1,1,4]
   ! allocate( volume_nodes( grid%gblock(1)%n_skip(1)+1, &
   !                         grid%gblock(1)%n_skip(2)+1, &
