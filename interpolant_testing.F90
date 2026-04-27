@@ -619,7 +619,7 @@ module index_conversion
   public :: global2local, global2local_bnd, global2local_ghost
   public :: local2global, local2global_bnd, local2global_ghost
   public :: global2local_face, local2global_face
-  public :: cell_face_nbors
+  public :: cell_face_nbors, node_cell_nbors
   public :: get_face_idx_from_id
   public :: get_reshape_indices, get_dim_order
   public :: range_intersect, bound_intersect
@@ -633,6 +633,11 @@ module index_conversion
     module procedure cell_face_nbors_lin
     module procedure cell_face_nbors_sub
   end interface cell_face_nbors
+
+  interface node_cell_nbors
+    module procedure node_cell_nbors_lin
+    module procedure node_cell_nbors_sub
+  end interface node_cell_nbors
   
 contains
 
@@ -790,6 +795,71 @@ contains
     nsub(dir) = nsub(dir) + 1
     local_idx = global2local( shifted_lin_idx,nsub)
   end subroutine global2local_face
+
+  pure subroutine node_cell_nbors_sub( dim, node_idx, cell_bnd_min, cell_bnd_max, nbor_cell_idx, n_nbors )
+    integer,                        intent(in)  :: dim
+    integer, dimension(dim),        intent(in)  :: node_idx
+    integer, dimension(dim),        intent(in)  :: cell_bnd_min, cell_bnd_max
+    integer, dimension(dim,2**dim), intent(out) :: nbor_cell_idx
+    integer,                        intent(out) :: n_nbors
+    integer, dimension(dim) :: sz, tmp_idx, offset1, offset2, offset3
+    integer :: j
+
+    ! if on max bound, offsets in that direction are negative only
+    ! if on min bound, offsets in that direction are positive only
+    ! [1,1] =>   [1,1],   [2,1],   [1,2],   [2,2]
+    !       => [+0,+0], [+1,+0], [+0,+1], [+1,+1]
+    ! [N,1] =>   [N,1], [N-1,1],   [N,2], [N-1,2]
+    !       => [+0,+0], [-1,+0], [+0,+1], [-1,+1]
+    ! [1,M] =>   [1,M],   [2,M], [1,M-1], [2,M-1]
+    !       => [+0,+0], [+1,+0], [+0,-1], [+1,-1]
+    ! [N,M] =>   [N,M], [N-1,M], [N,M-1], [N-1,M-1]
+    !       => [+0,+0], [-1,+0], [+0,-1], [-1,-1]
+
+    ! if on a min_bound, offsets are positive in that direction
+    ! otherwise offsets are negative
+
+
+    sz            = 2
+    where ( cell_bnd_max - cell_bnd_min == 0 ) sz = 1
+    nbor_cell_idx = 0
+    n_nbors       = 0
+    offset1       = 0
+    where ( node_idx == cell_bnd_max+1 )
+      offset1 = -1
+    end where
+    offset3   = -1
+    where ( node_idx == 1 )
+      offset3 =  1
+    end where
+
+    do j = 1,product(sz)
+      offset2 = global2local(j,sz)-1
+      tmp_idx = node_idx + offset2*offset3
+      if ( in_bound( dim, tmp_idx, cell_bnd_min, cell_bnd_max ) ) then
+        n_nbors = n_nbors + 1
+        nbor_cell_idx(:,n_nbors) = tmp_idx
+      end if
+    end do
+  end subroutine node_cell_nbors_sub
+
+  pure subroutine node_cell_nbors_lin( dim, lin_node_idx, cell_bnd_min, cell_bnd_max, lin_nbor_cell_idx, n_nbors )
+    integer,                    intent(in)  :: dim
+    integer,                    intent(in)  :: lin_node_idx
+    integer, dimension(dim),    intent(in)  :: cell_bnd_min, cell_bnd_max
+    integer, dimension(2**dim), intent(out) :: lin_nbor_cell_idx
+    integer,                    intent(out) :: n_nbors
+    integer, dimension(dim) :: tmp_idx
+    integer, dimension(dim,2**dim) :: nbor_cell_idx
+    integer :: i
+
+    tmp_idx = global2local_bnd(lin_node_idx,cell_bnd_min,cell_bnd_max+1)
+    call node_cell_nbors_sub(dim,tmp_idx,cell_bnd_min,cell_bnd_max,nbor_cell_idx,n_nbors)
+    lin_nbor_cell_idx = 0
+    do i = 1,n_nbors
+      lin_nbor_cell_idx(i) = local2global_bnd(nbor_cell_idx(:,i),cell_bnd_min,cell_bnd_max)
+    end do
+  end subroutine node_cell_nbors_lin
 
   pure subroutine cell_face_nbors_sub( dim, idx, bnd_min, bnd_max, nbor_cell_idx, nbor_face_id, n_int )
     integer,                       intent(in) :: dim
@@ -2356,7 +2426,7 @@ contains
     real(dp), dimension(m),   intent(out) :: x
     integer,  optional,       intent(out) :: status
     real(dp), dimension(m,m) :: LU, P
-    integer :: i, stat
+    integer :: stat
     if (present(status)) status = 0
     call LUdecomp(LU, P, A, m, status=stat )
     if (present(status)) status = stat
@@ -5752,23 +5822,27 @@ contains
 
   pure subroutine get_candidate_faces(gblock,bnd_num,xyz_point,node_idx,n_faces,cell_idxs,min_dist)
     use set_constants, only : large
-    use index_conversion, only : in_bound
+    use index_conversion, only : node_cell_nbors
     class(grid_block),        intent(in)  :: gblock
     integer,                  intent(in)  :: bnd_num
     real(dp), dimension(3),   intent(in)  :: xyz_point
     integer,  dimension(3),   intent(out) :: node_idx
     integer,                  intent(out) :: n_faces
-    integer,  dimension(3,4), intent(out) :: cell_idxs
+    integer,  dimension(3,8), intent(out) :: cell_idxs
     real(dp),                 intent(out) :: min_dist
     integer, dimension(3) :: lo, hi, stride, offset, idx, tmp
+    integer :: n_dim
     integer :: i,j,k,n
     real(dp), dimension(3) :: coord
     real(dp) :: dist
+
+    n_dim = gblock%n_dim
+
     ! loop over all face nodes on face specified by bnd_num, and find closest node
     lo    = 1
     hi    =  gblock%n_nodes
-    stride = 1; stride(1:gblock%n_dim) = gblock%n_skip(1:gblock%n_dim)
-    offset = 0; offset(1:gblock%n_dim) = 1
+    stride = 1; stride(1:n_dim) = gblock%n_skip(1:n_dim)
+    offset = 0; offset(1:n_dim) = 1
     select case(bnd_num)
     case(-1) ! xi_min  
       hi(1)     = 1
@@ -5813,27 +5887,29 @@ contains
     ! change to cell indexing
     lo    = 1
     hi    = 1
-    do n = 1,gblock%n_dim
-      hi(n)    = (gblock%n_nodes(n)-1)/gblock%n_skip(n)
-    end do
-    cell_idxs = 1
-    ! now get the indices of the cells adjacent to this node:
-    n_faces = 0
-    do k = -offset(3),0
-      do j = -offset(2),0
-        do i = -offset(1),0
-          tmp = [i,j,k]
-          idx = 1
-          do n = 1,gblock%n_dim
-            idx(n) = (node_idx(n)-1)/gblock%n_skip(n) + 1  + tmp(n)
-          end do
-          if ( in_bound(3,idx,lo,hi) ) then
-            n_faces = n_faces + 1
-            cell_idxs(:,n_faces) = idx
-          end if
-        end do
-      end do
-    end do
+    hi(1:n_dim) = (gblock%n_nodes(1:n_dim)-1)/gblock%n_skip(1:n_dim)
+    idx   = 1
+    idx(1:n_dim) = (node_idx(1:n_dim) - 1)/gblock%n_skip(1:n_dim) + 1
+    call node_cell_nbors( 3, idx, lo, hi, cell_idxs, n_faces )
+    lo = 1
+    ! cell_idxs = 1
+    ! ! now get the indices of the cells adjacent to this node:
+    ! n_faces = 0
+    ! do k = -offset(3),0
+    !   do j = -offset(2),0
+    !     do i = -offset(1),0
+    !       tmp = [i,j,k]
+    !       idx = 1
+    !       do n = 1,gblock%n_dim
+    !         idx(n) = (node_idx(n)-1)/gblock%n_skip(n) + 1  + tmp(n)
+    !       end do
+    !       if ( in_bound(3,idx,lo,hi) ) then
+    !         n_faces = n_faces + 1
+    !         cell_idxs(:,n_faces) = idx
+    !       end if
+    !     end do
+    !   end do
+    ! end do
   end subroutine get_candidate_faces
 
 
@@ -5852,7 +5928,7 @@ contains
 
     integer                  :: n_faces
     integer,  dimension(3)   :: node_idx
-    integer,  dimension(3,4) :: cell_idxs
+    integer,  dimension(3,8) :: cell_idxs
     integer, dimension(2) :: shp
     real(dp), dimension(:,:,:), allocatable :: face_nodes
     real(dp), dimension(3) :: xyz_out
@@ -7517,7 +7593,7 @@ program main
     ! pt = [2.3749641296722843_dp,1.8223740721795063_dp,-0.19620938769042878_dp]
     xyz_eval = zero
     min_dist = large
-    do i = 4,4 !1,n_bnds
+    do i = 1,1 !n_bnds
       call grid%gblock(1)%get_min_distance(bnd_nums(i),pt,dist,max_iter=n_iter,xyz_eval=xyz_tmp,clip=.true.,out_idx=cell_idx)
       if ( dist < min_dist ) then
         min_dist = dist
