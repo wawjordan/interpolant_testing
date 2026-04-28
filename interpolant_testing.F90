@@ -4695,6 +4695,158 @@ contains
   end subroutine volm_pt_diff
 
   pure subroutine curv_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+    use set_constants, only : two
+    type(interpolant_t),      intent(in)  :: this
+    real(dp), dimension(:), intent(in)  :: X1, X2, X3
+    real(dp),               intent(in)  :: pt
+    real(dp), dimension(3), intent(in)  :: xyz_pt
+    real(dp),               intent(out) :: fval
+    real(dp), dimension(1),   optional, intent(out) :: dfval
+    real(dp), dimension(1,1), optional, intent(out) :: d2fval
+    real(dp), dimension(3) :: grad
+    real(dp), dimension(3) :: hess
+    real(dp) :: A
+    real(dp), dimension(3) :: x_
+
+    if ( present(d2fval) ) then
+      call curv_pt_diff(this,X1,X2,X3,pt,x_,grad=grad,hess=hess)
+    elseif ( present(dfval) ) then
+      call curv_pt_diff(this,X1,X2,X3,pt,x_,grad=grad)
+    else
+      call curv_pt_diff(this,X1,X2,X3,pt,x_)
+    end if
+    x_ = x_ - xyz_pt
+    fval = dot_product(x_,x_)
+
+    if ( present(d2fval).or.present(dfval) ) then
+      A    = x_(1) * grad(1) + x_(2) * grad(2) + x_(3) * grad(3)
+      if ( present(dfval)  ) dfval = two*A
+      if ( present(d2fval) ) then
+        d2fval  = x_(1) * hess(1) + grad(1) * grad(1) &
+                + x_(2) * hess(2) + grad(2) * grad(2) &
+                + x_(3) * hess(3) + grad(3) * grad(3)
+        d2fval = two * d2fval
+      end if
+    end if
+
+  end subroutine curv_pt_dist_fun
+
+  pure subroutine surf_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+    use set_constants, only : two
+    type(interpolant_t),                intent(in)  :: this
+    real(dp), dimension(:,:),           intent(in)  :: X1, X2, X3
+    real(dp), dimension(2),             intent(in)  :: pt
+    real(dp), dimension(3),             intent(in)  :: xyz_pt
+    real(dp),                           intent(out) :: fval
+    real(dp), dimension(2),   optional, intent(out) :: dfval
+    real(dp), dimension(2,2), optional, intent(out) :: d2fval
+    real(dp), dimension(2,3) :: grad
+    real(dp), dimension(3,3) :: hess
+    real(dp) :: A11, A22, A12
+    real(dp), dimension(3) :: x_
+    real(dp), dimension(2) :: A
+    
+    if ( present(d2fval) ) then
+      call surf_pt_diff(this,X1,X2,X3,pt,x_,grad=grad,hess=hess)
+    elseif ( present(dfval) ) then
+      call surf_pt_diff(this,X1,X2,X3,pt,x_,grad=grad)
+    else
+      call surf_pt_diff(this,X1,X2,X3,pt,x_)
+    end if
+
+    x_ = x_ - xyz_pt
+    fval = dot_product(x_,x_)
+    
+    if ( present(d2fval).or.present(dfval) ) then
+      A(1) = x_(1) * grad(1,1) + x_(2) * grad(1,2) + x_(3) * grad(1,3)
+      A(2) = x_(1) * grad(2,1) + x_(2) * grad(2,2) + x_(3) * grad(2,3)
+      if ( present(dfval)  ) dfval = two * A
+      if ( present(d2fval) ) then
+        A11  = x_(1) * hess(1,1) + grad(1,1) * grad(1,1) &
+             + x_(2) * hess(1,2) + grad(1,2) * grad(1,2) &
+             + x_(3) * hess(1,3) + grad(1,3) * grad(1,3)
+        A22  = x_(1) * hess(3,1) + grad(2,1) * grad(2,1) &
+             + x_(2) * hess(3,2) + grad(2,2) * grad(2,2) &
+             + x_(3) * hess(3,3) + grad(2,3) * grad(2,3)
+        A12  = x_(1) * hess(2,1) + grad(1,1) * grad(2,1) &
+             + x_(2) * hess(2,2) + grad(1,2) * grad(2,2) &
+             + x_(3) * hess(2,3) + grad(1,3) * grad(2,3)
+        d2fval(1,1) = A11
+        d2fval(2,1) = A12
+        d2fval(1,2) = d2fval(2,1)
+        d2fval(2,2) = A22
+        d2fval = two * d2fval
+      end if
+    end if
+
+  end subroutine surf_pt_dist_fun
+
+
+  pure subroutine volm_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+    use set_constants, only : two
+    type(interpolant_t),                intent(in)  :: this
+    real(dp), dimension(:,:,:),         intent(in)  :: X1, X2, X3
+    real(dp), dimension(3),             intent(in)  :: pt
+    real(dp), dimension(3),             intent(in)  :: xyz_pt
+    real(dp),                           intent(out) :: fval
+    real(dp), dimension(3),   optional, intent(out) :: dfval
+    real(dp), dimension(3,3), optional, intent(out) :: d2fval
+    real(dp), dimension(3,3) :: grad
+    real(dp), dimension(6,3) :: hess
+    real(dp) :: L, L2, A11, A22, A33, A12, A13, A23
+    real(dp), dimension(3) :: x_, A
+
+    if ( present(d2fval) ) then
+      call volm_pt_diff(this,X1,X2,X3,pt,x_,grad=grad,hess=hess)
+    elseif ( present(dfval) ) then
+      call volm_pt_diff(this,X1,X2,X3,pt,x_,grad=grad)
+    else
+      call volm_pt_diff(this,X1,X2,X3,pt,x_)
+    end if
+
+    x_ = x_ - xyz_pt
+    fval = dot_product(x_,x_)
+
+    if ( present(d2fval).or.present(dfval) ) then
+      A(1) = x_(1) * grad(1,1) + x_(2) * grad(1,2) + x_(3) * grad(1,3)
+      A(2) = x_(1) * grad(2,1) + x_(2) * grad(2,2) + x_(3) * grad(2,3)
+      A(3) = x_(1) * grad(3,1) + x_(2) * grad(3,2) + x_(3) * grad(3,3)
+      if ( present(dfval)  ) dfval = two * A
+      if ( present(d2fval) ) then
+        A11  = x_(1) * hess(1,1) + grad(1,1) * grad(1,1) &
+             + x_(2) * hess(1,2) + grad(1,2) * grad(1,2) &
+             + x_(3) * hess(1,3) + grad(1,3) * grad(1,3)
+        A22  = x_(1) * hess(2,1) + grad(2,1) * grad(2,1) &
+             + x_(2) * hess(2,2) + grad(2,2) * grad(2,2) &
+             + x_(3) * hess(2,3) + grad(2,3) * grad(2,3)
+        A33  = x_(1) * hess(3,1) + grad(3,1) * grad(3,1) &
+             + x_(2) * hess(3,2) + grad(3,2) * grad(3,2) &
+             + x_(3) * hess(3,3) + grad(3,3) * grad(3,3)
+        A12  = x_(1) * hess(4,1) + grad(1,1) * grad(2,1) &
+             + x_(2) * hess(4,2) + grad(1,2) * grad(2,2) &
+             + x_(3) * hess(4,3) + grad(1,3) * grad(2,3)
+        A13  = x_(1) * hess(5,1) + grad(1,1) * grad(3,1) &
+             + x_(2) * hess(5,2) + grad(1,2) * grad(3,2) &
+             + x_(3) * hess(5,3) + grad(1,3) * grad(3,3)
+        A23  = x_(1) * hess(6,1) + grad(2,1) * grad(3,1) &
+             + x_(2) * hess(6,2) + grad(2,2) * grad(3,2) &
+             + x_(3) * hess(6,3) + grad(2,3) * grad(3,3)
+        d2fval(1,1) = A11
+        d2fval(2,1) = A12
+        d2fval(3,1) = A13
+        d2fval(1,2) = d2fval(2,1)
+        d2fval(2,2) = A22
+        d2fval(3,2) = A23
+        d2fval(1,3) = d2fval(3,1)
+        d2fval(2,3) = d2fval(3,2)
+        d2fval(3,3) = A33
+        d2fval = two * d2fval
+      end if
+    end if
+
+  end subroutine volm_pt_dist_fun
+
+  pure subroutine curv_pt_dist_fun_old(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
     type(interpolant_t),      intent(in)  :: this
     real(dp), dimension(:), intent(in)  :: X1, X2, X3
     real(dp),               intent(in)  :: pt
@@ -4730,9 +4882,9 @@ contains
       end if
     end if
 
-  end subroutine curv_pt_dist_fun
+  end subroutine curv_pt_dist_fun_old
 
-  pure subroutine surf_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+  pure subroutine surf_pt_dist_fun_old(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
     type(interpolant_t),                intent(in)  :: this
     real(dp), dimension(:,:),           intent(in)  :: X1, X2, X3
     real(dp), dimension(2),             intent(in)  :: pt
@@ -4780,10 +4932,10 @@ contains
       end if
     end if
 
-  end subroutine surf_pt_dist_fun
+  end subroutine surf_pt_dist_fun_old
 
 
-  pure subroutine volm_pt_dist_fun(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
+  pure subroutine volm_pt_dist_fun_old(this,X1,X2,X3,pt,xyz_pt,fval,dfval,d2fval)
     type(interpolant_t),                intent(in)  :: this
     real(dp), dimension(:,:,:),         intent(in)  :: X1, X2, X3
     real(dp), dimension(3),             intent(in)  :: pt
@@ -4846,7 +4998,7 @@ contains
       end if
     end if
 
-  end subroutine volm_pt_dist_fun
+  end subroutine volm_pt_dist_fun_old
 
   pure function pt_interp(this,pt) result(xyz_eval)
     use set_constants, only : zero
@@ -4958,9 +5110,9 @@ contains
     ! real(dp) :: a_i, a_lo, a_hi, a_im1, f_0, f_i, f_im1, df_0, df_i, df_im1
     ! logical  :: zoom, line_conv
     ! integer  :: iter
-    real(dp), dimension(this%n_dim) :: dfk_alt
-    real(dp), dimension(this%n_dim,this%n_dim) :: d2fk_alt
-    real(dp) :: f__, fp_, fm_, f_p, f_m, fpp, fpm, fmp, fmm
+    ! real(dp), dimension(this%n_dim) :: dfk_alt
+    ! real(dp), dimension(this%n_dim,this%n_dim) :: d2fk_alt
+    ! real(dp) :: f__, fp_, fm_, f_p, f_m, fpp, fpm, fmp, fmm
 
     if ( present(status) ) status = 0
 
@@ -5002,39 +5154,39 @@ contains
     eta = one
     
     
-    f__ = norm2( this%pt_interp(xk + [0.0_dp,0.0_dp]) - xyz_point )
-    fp_ = norm2( this%pt_interp(xk + [     h,0.0_dp]) - xyz_point )
-    fm_ = norm2( this%pt_interp(xk + [    -h,0.0_dp]) - xyz_point )
-    f_p = norm2( this%pt_interp(xk + [0.0_dp,     h]) - xyz_point )
-    f_m = norm2( this%pt_interp(xk + [0.0_dp,    -h]) - xyz_point )
-    fpp = norm2( this%pt_interp(xk + [     h,     h]) - xyz_point )
-    fpm = norm2( this%pt_interp(xk + [     h,    -h]) - xyz_point )
-    fmp = norm2( this%pt_interp(xk + [    -h,     h]) - xyz_point )
-    fmm = norm2( this%pt_interp(xk + [    -h,    -h]) - xyz_point )
+    ! f__ = norm2( this%pt_interp(xk + [0.0_dp,0.0_dp]) - xyz_point )
+    ! fp_ = norm2( this%pt_interp(xk + [     h,0.0_dp]) - xyz_point )
+    ! fm_ = norm2( this%pt_interp(xk + [    -h,0.0_dp]) - xyz_point )
+    ! f_p = norm2( this%pt_interp(xk + [0.0_dp,     h]) - xyz_point )
+    ! f_m = norm2( this%pt_interp(xk + [0.0_dp,    -h]) - xyz_point )
+    ! fpp = norm2( this%pt_interp(xk + [     h,     h]) - xyz_point )
+    ! fpm = norm2( this%pt_interp(xk + [     h,    -h]) - xyz_point )
+    ! fmp = norm2( this%pt_interp(xk + [    -h,     h]) - xyz_point )
+    ! fmm = norm2( this%pt_interp(xk + [    -h,    -h]) - xyz_point )
 
-    dfk_alt(1) = (fp_ - fm_)/(two*h)
-    dfk_alt(2) = (f_p - f_m)/(two*h)
+    ! dfk_alt(1) = (fp_ - fm_)/(two*h)
+    ! dfk_alt(2) = (f_p - f_m)/(two*h)
 
-    d2fk_alt(1,1) = (fp_ - two*f__ + fm_)/(h*h)
-    d2fk_alt(2,2) = (f_p - two*f__ + f_m)/(h*h)
-    d2fk_alt(1,2) = (fpp - fpm - fmp + fmm)/(four*h*h)
-    d2fk_alt(2,1) = d2fk_alt(1,2)
+    ! d2fk_alt(1,1) = (fp_ - two*f__ + fm_)/(h*h)
+    ! d2fk_alt(2,2) = (f_p - two*f__ + f_m)/(h*h)
+    ! d2fk_alt(1,2) = (fpp - fpm - fmp + fmm)/(four*h*h)
+    ! d2fk_alt(2,1) = d2fk_alt(1,2)
 
     call this%pt_dist_fun(xyz_point,xk,fk)
-    dist = fk
+    dist = sqrt( fk )
     k = 1
     if ( dist > near_zero) then
       call this%pt_dist_fun(xyz_point,xk,fk,dfval=dfk,d2fval=d2fk)
-      
-      if ( all( [(abs(d2fk(j,j))>h,j=1,this%n_dim)] ) ) then
-        call linear_solve(-d2fk,dfk,dk,status=status)
-        m1 = dot_product(dfk,dk)
-        if (m1>zero) then
-          dk = -dfk
-        end if
-      else
-        dk = -dfk
-      end if
+      call linear_solve(-d2fk,dfk,dk,status=status)
+      ! if ( all( [(abs(d2fk(j,j))>h,j=1,this%n_dim)] ) ) then
+      !   call linear_solve(-d2fk,dfk,dk,status=status)
+      !   m1 = dot_product(dfk,dk)
+      !   if (m1>zero) then
+      !     dk = -dfk
+      !   end if
+      ! else
+      !   dk = -dfk
+      ! end if
       m1 = dot_product(dfk,dk)
 
       fk0      = fk
@@ -5043,15 +5195,15 @@ contains
 
       do k = 1,max_iter_
 
-        if ( all( [(abs(d2fk(j,j))>h,j=1,this%n_dim)] ) ) then
+        ! if ( all( [(abs(d2fk(j,j))>h,j=1,this%n_dim)] ) ) then
           call linear_solve(-d2fk,dfk,dk,status=status)
-          m1 = dot_product(dfk,dk)
-          if (m1>zero) then
-            dk = -dfk
-          end if
-        else
-          dk = -dfk
-        end if
+        !   m1 = dot_product(dfk,dk)
+        !   if (m1>zero) then
+        !     dk = -dfk
+        !   end if
+        ! else
+        !   dk = -dfk
+        ! end if
         m1 = dot_product(dfk,dk)
 
         eta = min(one,eta/gamma_)
@@ -5062,18 +5214,20 @@ contains
           if ((esa<stola).or.(eta<h)) then
             exit
           end if
-          if ( clip_ ) xkp1 = min( max( xkp1,-one-h), one+h)
+          
           call this%pt_dist_fun(xyz_point,xkp1,fkp1,dfval=dfkp1)
 
           ! Wolfe conditions
           wc1 = fkp1 <= fk + c1_*eta*dot_product(dfk,dk)
           ! wc2 = abs( dot_product(dfkp1,dk) ) <= c2_*abs( dot_product(dfk,dk) )
           wc2 = dot_product(dfkp1,dk) >= c2_*dot_product(dfk,dk)
-          if ( wc1 ) then
+          if ( wc1 .and. wc2 ) then
             exit
           end if
           eta = gamma_*eta ! calculate new eta
         end do
+
+        if ( clip_ ) xkp1 = min( max( xkp1,-one-h), one+h)
         
         ! 1st order optimality measure
         opta = maxval(abs(dfk))
@@ -5086,14 +5240,15 @@ contains
         ! function value measure
         efa = abs(fkp1 - fk)    ! calculate change in function
         efr = efa/(one+abs(fk))
-        converged = (optr<opttolr).and.(esr<stolr).and.(efr<ftolr)
-        converged = converged.or.( (opta<opttola).and.(efa<ftola).and.(esa<stola) )
-        if ( converged ) then
-          exit
-        end if
+        converged = ((optr<opttolr).and.(efr<ftolr)).or.(esr<stolr)
+        converged = converged.or.( ((opta<opttola).and.(efa<ftola)).or.(esa<stola) )
 
         ! save the last step
         xk = xkp1
+
+        if ( converged ) then
+          exit
+        end if
 
         ! take the next step
         call this%pt_dist_fun(xyz_point,xk,fk,dfval=dfk,d2fval=d2fk)
@@ -5112,7 +5267,7 @@ contains
       ! output
       pt = 1
       pt(1:this%n_dim) = xk
-      dist = fk
+      dist = sqrt( fk )
       if (present(xyz_eval) ) xyz_eval = this%pt_interp(xk)
     else
       if (present(xyz_eval) ) xyz_eval = xyz_point
@@ -6252,17 +6407,14 @@ contains
       call interp%create( pack(face_nodes(:,:,1),.true.), &
                           pack(face_nodes(:,:,2),.true.), &
                           pack(face_nodes(:,:,3),.true.), shape(face_nodes(:,:,1)) )
-      ! uv = zero
-      call interp%nearest_pt(2,xyz_point,uv,dist=dist, dist_est=dist_est, xyz_out=xyz_out)
+      uv = zero
+      ! call interp%nearest_pt(2,xyz_point,uv,dist=dist, dist_est=dist_est, xyz_out=xyz_out)
+      ! call interp%nearest_pt(2,xyz_point,uv,dist=dist)
 
-      if ( dist < min_dist ) then
-        min_dist = dist
-        face_num = i
-      end if
-      xyz00 = interp%pt_interp([-one,-one])
-      xyz10 = interp%pt_interp([-one+h,-one])
-      xyz01 = interp%pt_interp([-one,-one+h])
-      xyz11 = interp%pt_interp([-one+h,-one+h])
+      ! if ( dist < min_dist ) then
+      !   min_dist = dist
+      !   face_num = i
+      ! end if
       call interp%min_distance(xyz_point,uv,dist,xyz_eval=xyz_eval,max_iter=max_iter,clip=clip,status=status)
       call interp%destroy()
       deallocate( face_nodes )
@@ -7431,20 +7583,20 @@ contains
 
     call grid%setup(n_dim,1)
     call grid%gblock(1)%setup(n_dim,n_nodes,n_ghost,n_skip=n_skip)
-    call grid%gblock(1)%set_nodes( sphere_mesh(    n_nodes(1),                 &
-                                                   n_nodes(2),                 &
-                                                   n_nodes(3),                 &
-                                                   end_pts=end_pts,            &
-                                                   r_fun=x1_map,               &
-                                                   theta_fun=x2_map,           &
-                                                   phi_fun=x3_map ) )
-    ! call grid%gblock(1)%set_nodes( annulus_mesh(   n_nodes(1),                 &
+    ! call grid%gblock(1)%set_nodes( sphere_mesh(    n_nodes(1),                 &
     !                                                n_nodes(2),                 &
     !                                                n_nodes(3),                 &
     !                                                end_pts=end_pts,            &
     !                                                r_fun=x1_map,               &
     !                                                theta_fun=x2_map,           &
-    !                                                z_fun=x3_map ) )
+    !                                                phi_fun=x3_map ) )
+    call grid%gblock(1)%set_nodes( annulus_mesh(   n_nodes(1),                 &
+                                                   n_nodes(2),                 &
+                                                   n_nodes(3),                 &
+                                                   end_pts=end_pts,            &
+                                                   r_fun=x1_map,               &
+                                                   theta_fun=x2_map,           &
+                                                   z_fun=x3_map ) )
     if (present(delta) ) then
       call perturb_mesh( grid%gblock(1)%node_coords, delta )
     end if
@@ -7864,18 +8016,18 @@ program main
   logical :: old
   character(100) :: zone_name
   character(*), parameter :: file_name='TEST_GRID.dat'
-  n_dim   = 3
-  n_nodes = [9,17,17]
-  n_ghost = [0,0,0]
-  n_skip  = [2,2,2]
-
-  ! n_dim   = 2
-  ! n_nodes = [9,17,1]
+  ! n_dim   = 3
+  ! n_nodes = [9,17,17]
   ! n_ghost = [0,0,0]
-  ! n_skip  = [2,2,0]
+  ! n_skip  = [2,2,2]
+
+  n_dim   = 2
+  n_nodes = [9,17,1]
+  n_ghost = [0,0,0]
+  n_skip  = [2,2,0]
 
   n_iter   = 100
-  n_pts = 33
+  n_pts = 100
   n_t_pts = n_pts**(n_dim-1)
   
   n_bnds = 2*n_dim
@@ -7894,9 +8046,9 @@ program main
   ! allocate( pts(3,n_pts) )
 
   ! pts = reshape(sphere_mesh(1,n_pts,n_pts,end_pts=reshape([1.5_dp,zero,fourth*pi,1.5_dp,half*pi,three*fourth*pi],[3,2])),[3,n_t_pts])
-  pts = reshape(sphere_mesh(n_pts,1,n_pts,end_pts=reshape([1.0_dp,half*pi,fourth*pi,2.0_dp,half*pi,three*fourth*pi],[3,2])),[3,n_t_pts])
+  ! pts = reshape(sphere_mesh(n_pts,1,n_pts,end_pts=reshape([1.0_dp,half*pi,fourth*pi,2.0_dp,half*pi,three*fourth*pi],[3,2])),[3,n_t_pts])
 
-  ! pts = reshape(annulus_mesh(1,n_pts,1,end_pts=reshape([1.5_dp,zero,zero,three,half*pi,zero],[3,2])),[3,n_t_pts])
+  pts = reshape(annulus_mesh(1,n_pts,1,end_pts=reshape([1.5_dp,zero,zero,three,half*pi,zero],[3,2])),[3,n_t_pts])
 
   call output_grid( grid, file_name )
   old = .true.
@@ -7904,13 +8056,13 @@ program main
   
   allocate(out_vec(3,2))
   ! do j = 495,495 !1,n_t_pts
-  do j = 2,2!1,n_t_pts
+  do j = 1,n_t_pts
     ! pt = rand_coord_in_range(3,[two,two,two],[three,three,three])
     pt = pts(:,j)
     ! pt = [2.3749641296722843_dp,1.8223740721795063_dp,-0.19620938769042878_dp]
     xyz_eval = zero
     min_dist = large
-    do i = 4,4 !1,n_bnds
+    do i = 1,n_bnds
       call grid%gblock(1)%get_min_distance(bnd_nums(i),pt,dist,max_iter=n_iter,xyz_eval=xyz_tmp,clip=.true.,out_idx=cell_idx)
       if ( dist < min_dist ) then
         min_dist = dist
