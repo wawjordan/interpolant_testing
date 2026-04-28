@@ -1,11 +1,13 @@
 module set_precision
-  use iso_fortran_env, only : real64, int32, int64
+  use iso_fortran_env, only : real32, real64, int32, int64
   implicit none
   private
-  public :: dp, i4, i8
+  public :: dp, i4, i8, r4, r8
   integer, parameter :: dp  = real64
   integer, parameter :: i4  = int32
   integer, parameter :: i8  = int64
+  integer, parameter :: r4  = real32
+  integer, parameter :: r8  = real64
 end module set_precision
 
 module set_constants
@@ -99,7 +101,80 @@ module string_stuff
   public :: generate_newline_string
   public :: progress_line, iteration_line
   public :: write_integer_tuple
+  public :: line_count
+  interface line_count
+    module procedure line_count_i4
+    module procedure line_count_i8
+    module procedure line_count_r4
+    module procedure line_count_r8
+  end interface line_count
+
 contains
+
+  pure subroutine line_count_i4(source,max_count,line,cnt)
+    use set_precision, only : i4
+    integer(i4),  intent(in)  :: source
+    integer,      intent(in)  :: max_count
+    character(*), intent(in)  :: line
+    integer,      intent(out) :: cnt
+    integer :: i, ierr
+    integer(i4), dimension(max_count) :: buffer
+    cnt = 0
+    do i = 1,max_count
+      read(line,*,iostat=ierr) buffer(1:cnt+1)
+      if (ierr/=0) exit
+      cnt = cnt + 1
+    end do
+  end subroutine line_count_i4
+
+  pure subroutine line_count_i8(source,max_count,line,cnt)
+    use set_precision, only : i8
+    integer(i8),  intent(in)  :: source
+    integer,      intent(in)  :: max_count
+    character(*), intent(in)  :: line
+    integer,      intent(out) :: cnt
+    integer :: i, ierr
+    integer(i8), dimension(max_count) :: buffer
+    cnt = 0
+    do i = 1,max_count
+      read(line,*,iostat=ierr) buffer(1:cnt+1)
+      if (ierr/=0) exit
+      cnt = cnt + 1
+    end do
+  end subroutine line_count_i8
+
+  pure subroutine line_count_r4(source,max_count,line,cnt)
+    use set_precision, only : r4
+    real(r4),     intent(in)  :: source
+    integer,      intent(in)  :: max_count
+    character(*), intent(in)  :: line
+    integer,      intent(out) :: cnt
+    integer :: i, ierr
+    real(r4), dimension(max_count) :: buffer
+    cnt = 0
+    do i = 1,max_count
+      read(line,*,iostat=ierr) buffer(1:cnt+1)
+      if (ierr/=0) exit
+      cnt = cnt + 1
+    end do
+  end subroutine line_count_r4
+
+  pure subroutine line_count_r8(source,max_count,line,cnt)
+    use set_precision, only : r8
+    real(r8),     intent(in)  :: source
+    integer,      intent(in)  :: max_count
+    character(*), intent(in)  :: line
+    integer,      intent(out) :: cnt
+    integer :: i, ierr
+    real(r8), dimension(max_count) :: buffer
+    cnt = 0
+    do i = 1,max_count
+      read(line,*,iostat=ierr) buffer(1:cnt+1)
+      if (ierr/=0) exit
+      cnt = cnt + 1
+    end do
+  end subroutine line_count_r8
+
   subroutine write_integer_tuple(integer_list,out_string,plus,delim)
     integer, dimension(:),  intent(in)  :: integer_list
     character(*),           intent(out) :: out_string
@@ -6046,6 +6121,7 @@ module grid_derived_type
     integer, dimension(3) :: n_cells
     integer, dimension(3) :: n_ghost
     integer, dimension(3) :: n_skip
+    integer  :: block_id
     integer  :: n_dim
     integer  :: total_cells
     real(dp) :: total_volume
@@ -6073,6 +6149,27 @@ module grid_derived_type
     procedure, public, pass   :: setup => init_grid_type
     procedure, public, pass :: destroy => deallocate_grid
   end type grid_type
+
+  ! type wall_bound_t
+
+  !   ! Indicies of the nodes that are along this non-slip wall boundary
+  !   integer, dimension(3) :: idx_min = 1
+  !   integer, dimension(3) :: idx_max = 1
+
+  !   ! Indicies of the cells that are along this non-slip wall boundary
+  !   integer, dimension(3) :: cell_idx_min = 1
+  !   integer, dimension(3) :: cell_idx_max = 1
+
+  !   integer, dimension(3) :: out_dir
+
+  !   integer :: face_label
+
+  !   !> x,y,z nodal coordinates for wall non-slip wall bc
+  !   real(dp), allocatable, dimension(:,:,:) :: wall_x
+  !   real(dp), allocatable, dimension(:,:,:) :: wall_y
+  !   real(dp), allocatable, dimension(:,:,:) :: wall_z
+
+  ! end type wall_bound_t
 
 contains
 
@@ -6430,6 +6527,10 @@ contains
     if (present(out_idx))  out_idx  = cell_idxs(:,face_num)
   end subroutine get_min_distance
 
+  ! subroutine get_wall_distance_linear(grid)
+  !   class(grid_type), intent(inout)  :: grid
+  ! end subroutine get_wall_distance_linear
+
     
   ! subroutine coarsen_grid(n_skip,grid,grid_coarse)
   !   integer, dimension(3), intent(in)  :: n_skip
@@ -6509,12 +6610,12 @@ contains
     allocate( this%gblock(n_blocks) )
   end subroutine init_grid_type
 
-  pure subroutine allocate_grid_block( this, n_dim, n_nodes, n_ghost, n_skip )
+  pure subroutine allocate_grid_block( this, block_id, n_dim, n_nodes, n_ghost, n_skip )
     use set_constants, only : zero
-    integer,               intent(in)  :: n_dim
+    class(grid_block),     intent(inout) :: this
+    integer,               intent(in)  :: block_id, n_dim
     integer, dimension(3), intent(in)  :: n_nodes, n_ghost
     integer, dimension(3), optional, intent(in) :: n_skip
-    class(grid_block),     intent(inout) :: this
     integer, dimension(3) :: lo, hi
     this%n_dim   = n_dim
     this%n_nodes = 1; this%n_nodes(1:n_dim) = n_nodes(1:n_dim)
@@ -6970,6 +7071,15 @@ contains
     if (allocated(coords_tmp))   deallocate(coords_tmp)
     if (allocated(coords_tmp_g)) deallocate(coords_tmp_g)
 
+    ! min_dist = large
+    ! do i = 1,n_bnds
+    !   call grid%gblock(1)%get_min_distance(bnd_nums(i),pt,dist,max_iter=n_iter,xyz_eval=xyz_tmp,clip=.true.,out_idx=cell_idx)
+    !   if ( dist < min_dist ) then
+    !     min_dist = dist
+    !     xyz_eval = xyz_tmp
+    !   end if
+    ! end do
+
   end subroutine compute_quadrature_points
 
   pure elemental subroutine deallocate_grid(this)
@@ -7089,6 +7199,305 @@ module grid_local
   type(grid_type) :: grid
 
 end module grid_local
+
+module plot_3D_grid_io
+  use set_precision, only : dp
+  implicit none
+  private
+  public :: read_grid
+contains
+
+  subroutine read_grid( file_name, n_dim, n_ghost, n_skip, grid )
+    use grid_derived_type,    only : grid_type
+    use file_routines,        only : open_existing_file
+    character(*),          intent(in)  :: file_name 
+    integer,               intent(in)  :: n_dim
+    integer, dimension(3), intent(in)  :: n_ghost, n_skip
+    type(grid_type),       intent(out) :: grid
+    integer :: data_start, n_blocks, dim, total_size
+    logical :: query
+    integer :: fid, status
+    integer :: b
+    integer, dimension(:,:), allocatable :: blk_sizes
+    real(dp), dimension(:),  allocatable :: coord_data
+
+    real(dp), dimension(:,:,:,:),  allocatable :: coords_tmp
+
+    fid = open_existing_file( trim(file_name), append=.false.)
+
+    query = .true.
+    call read_plot3D(fid,query,data_start,n_blocks,dim,total_size)
+
+    allocate( blk_sizes(3,n_blocks)   )
+    allocate( coord_data(total_size ) )
+
+    query = .false.
+    call read_plot3D(fid,query,data_start,n_blocks,dim,total_size,blk_sizes=blk_sizes,coord_data=coord_data,status=status)
+
+    close(fid)
+
+    call grid%setup(n_dim,n_blocks)
+    do b = 1,n_blocks
+      call grid%gblock(b)%setup( b, n_dim, blk_sizes(:,b), n_ghost, n_skip=n_skip )
+      allocate( coords_tmp(3,blk_sizes(1,b),blk_sizes(2,b),blk_sizes(3,b)) )
+      call access_block_data( b, n_blocks, dim, blk_sizes, total_size, coord_data, coords_tmp )
+      call grid%gblock(b)%set_nodes( coords_tmp )
+      deallocate( coords_tmp )
+    end do
+
+    deallocate( blk_sizes, coord_data )
+
+    grid%total_int_cells  = sum( grid%gblock%total_cells )
+    grid%total_int_volume = sum( grid%gblock%total_volume )
+  end subroutine read_grid
+
+  pure subroutine access_block_data( b, n_blocks, dim, blk_sizes, total_size, coord_data, coords )
+    use set_constants, only : zero
+    integer,                         intent(in) :: b, n_blocks, dim
+    integer,  dimension(3,n_blocks), intent(in) :: blk_sizes
+    integer,                         intent(in) :: total_size
+    real(dp), dimension(total_size), intent(in) :: coord_data
+    real(dp), dimension(3,blk_sizes(1,b),blk_sizes(2,b),blk_sizes(3,b)), intent(out) :: coords
+    integer :: n, i, j, k, cnt, lo
+
+    cnt = 0
+    do n = 1,b-1
+      cnt = cnt + product(blk_sizes(:,n)) * dim
+    end do
+
+    coords = zero
+    do n = 1,dim
+      do k = 1,blk_sizes(3,b)
+        do j = 1,blk_sizes(2,b)
+          do i = 1,blk_sizes(1,b)
+            cnt = cnt + 1
+            coords(n,i,j,k) = coord_data(cnt)
+          end do
+        end do
+      end do
+    end do
+  end subroutine access_block_data
+
+  subroutine read_plot3D( fid, query, data_start, n_blocks, dim, total_size, blk_sizes, coord_data, status )
+    use set_constants, only : max_text_line_length
+    integer,                                   intent(in)    :: fid
+    logical,                                   intent(in)    :: query
+    integer,                                   intent(inout) :: data_start, n_blocks, dim, total_size
+    integer,  dimension(3,n_blocks), optional, intent(out)   :: blk_sizes
+    real(dp), dimension(total_size), optional, intent(out)   :: coord_data
+    integer,                         optional, intent(out)   :: status
+    character(max_text_line_length) :: line
+    integer :: n
+    integer :: ierr
+    logical :: single_block, plot2D
+
+    if ( present(status) ) status = 0
+    ierr = 0
+    if (query) then
+      call query_plot3D(fid,plot2D,single_block,data_start,n_blocks,dim,total_size,status=ierr)
+      if (ierr==0) then
+        if ( present(blk_sizes) ) then
+          call read_plot3D_size( fid, single_block, n_blocks, dim, blk_sizes, status=ierr )
+        end if
+      end if
+    else
+      if ( present(blk_sizes) ) then
+        call read_plot3D_size( fid, single_block, n_blocks, dim, blk_sizes, status=ierr )
+      end if
+      do n = 1,data_start-1
+        read(fid,'(A)') line
+      end do
+      read (fid,*) ( coord_data(n), n=1,total_size )
+    end if
+
+    if ( ierr /= 0 ) then
+      if ( present(status) ) status = ierr
+    end if
+
+    rewind(fid)
+
+  end subroutine read_plot3D
+
+  subroutine read_plot3D_size( fid, single_block, n_blocks, dim, blk_sizes, status )
+    use set_constants, only : max_text_line_length
+    integer,                         intent(in)  :: fid
+    logical,                         intent(in)  :: single_block
+    integer,                         intent(in)  :: n_blocks, dim
+    integer,  dimension(3,n_blocks), intent(out) :: blk_sizes
+    integer,               optional, intent(out) :: status
+    integer :: n, i, j, k
+    integer :: ierr, opt
+    character(max_text_line_length) :: line
+
+    if ( present(status) ) status = 0
+    ierr      = 0
+    blk_sizes = 1
+    if (dim==2) then
+      opt = 1
+      if (.not.single_block) opt = 2
+    else
+      opt = 3
+      if (.not.single_block) opt = 4
+    end if
+    select case(opt)
+    case(1)
+      read(fid,'(A)') line
+      read(line,*,iostat=ierr) i, j
+      if ( ierr == 0 ) blk_sizes(1:2,1) = [i,j]
+    case(2)
+      read(fid,'(A)') line
+      read(line,*,iostat=ierr) n
+      if ( ierr == 0 ) then
+        do n = 1,n_blocks
+          read(fid,'(A)') line
+          read(line,*,iostat=ierr) i, j
+          if ( ierr /= 0 ) exit
+          blk_sizes(1:2,n) = [i,j]
+        end do
+      end if
+    case(3)
+      read(fid,'(A)') line
+      read(line,*,iostat=ierr) i, j, k
+      if ( ierr == 0 ) blk_sizes(1:3,1) = [i,j,k]
+    case(4)
+      read(fid,'(A)') line
+      read(line,*,iostat=ierr) n
+      if ( ierr == 0 ) then
+        do n = 1,n_blocks
+          read(fid,'(A)') line
+          read(line,*,iostat=ierr) i, j, k
+          if ( ierr /= 0 ) exit
+          blk_sizes(1:3,n) = [i,j,k]
+        end do
+      end if
+    case default
+      ierr = 1
+    end select
+
+    if ( ierr /= 0 ) then
+      if ( present(status) ) status = ierr
+    end if
+
+    rewind(fid)
+
+  end subroutine read_plot3D_size
+
+  subroutine query_plot3D( fid, plot2d, single_block, data_start, n_blocks, dim, total_size, status )
+    use set_constants, only : max_text_line_length
+    use string_stuff,  only : line_count
+    integer,           intent(in)    :: fid
+    logical,           intent(out)   :: plot2d, single_block
+    integer,           intent(out)   :: data_start, n_blocks, dim, total_size
+    integer, optional, intent(out)   :: status
+    integer, parameter :: max_dim_cnt = 10
+    integer :: n, i, j, k, cnt, opt
+    integer :: ierr
+    character(max_text_line_length) :: line
+
+    if ( present(status) ) status = 0
+    ierr = 0
+    data_start = 0
+    n_blocks   = 0
+    dim        = 0
+    total_size = 0
+    single_block = .false.
+    plot2d       = .false.
+    read(fid,'(A)') line
+    call line_count(i,max_dim_cnt,line,cnt)
+    select case(cnt)
+    case(1)
+      single_block = .false.
+    case(2)
+      single_block = .true.
+      plot2d       = .true.
+    case(3)
+      single_block = .true.
+      plot2d       = .false.
+      read(line,*,iostat=ierr) i, j, k
+    case default
+      ierr = -cnt
+    end select
+
+    if ( ierr == 0 .and.(.not. single_block)) then
+      read(fid,'(A)') line
+      call line_count(i,max_dim_cnt,line,cnt)
+      select case(cnt)
+      case(2)
+        plot2d = .true.
+      case(3)
+        plot2d = .false.
+        read(line,*,iostat=ierr) i, j, k
+      case default
+        ierr = -cnt
+      end select
+    end if
+
+    if ( ierr == 0 ) then
+      rewind(fid)
+      if (plot2d) then
+        opt = 1
+        if (.not.single_block) opt = 2
+      else
+        opt = 3
+        if (.not.single_block) opt = 4
+      end if
+
+      data_start = data_start + 1
+
+      select case(opt)
+      case(1)
+        dim      = 2
+        n_blocks = 1
+        read(fid,'(A)') line
+        data_start = data_start + 1
+        read(line,*,iostat=ierr) i, j
+        if ( ierr == 0 ) total_size = dim * i * j
+      case(2)
+        dim  = 2
+        read(fid,'(A)') line
+        data_start = data_start + 1
+        read(line,*,iostat=ierr) n_blocks
+        if ( ierr /= 0 ) n_blocks = 0
+        do n = 1,n_blocks
+          read(fid,'(A)') line
+          data_start = data_start + 1
+          read(line,*,iostat=ierr) i, j
+          if ( ierr /= 0 ) exit
+          total_size = total_size + dim * i * j
+        end do
+      case(3)
+        dim      = 3
+        n_blocks = 1
+        read(fid,'(A)') line
+        data_start = data_start + 1
+        read(line,*,iostat=ierr) i, j, k
+        if ( ierr == 0 ) total_size = dim * i * j * k
+      case(4)
+        dim = 3
+        read(fid,'(A)') line
+        data_start = data_start + 1
+        read(line,*,iostat=ierr) n_blocks
+        if ( ierr /= 0 ) n_blocks = 0
+        do n = 1,n_blocks
+          read(fid,'(A)') line
+          data_start = data_start + 1
+          read(line,*,iostat=ierr) i, j, k
+          if ( ierr /= 0 ) exit
+          total_size = total_size + dim * i * j * k
+        end do
+      case default
+        ierr = 1
+      end select
+    end if
+
+    if ( ierr /= 0 ) then
+      if ( present(status) ) status = ierr
+    end if
+
+    rewind(fid)
+  end subroutine query_plot3D
+
+end module plot_3D_grid_io
 
 module monomial_basis_derived_type
   implicit none
@@ -7527,9 +7936,9 @@ module test_problem
   public :: output_volume_subzone
   public :: output_face_subzone
   public :: output_line_subzone
-
   interface setup_grid
     module procedure setup_grid_generate
+    module procedure setup_grid_read
   end interface setup_grid
 contains
 
@@ -7570,6 +7979,22 @@ contains
     end if
   end function geom_space
 
+  subroutine setup_grid_read( file_name, n_dim, n_ghost, n_skip, grid )
+    use grid_derived_type,    only : grid_type
+    use plot_3D_grid_io,      only : read_grid
+    character(*),          intent(in)  :: file_name
+    integer,               intent(in)  :: n_dim
+    integer, dimension(3), intent(in)  :: n_ghost, n_skip
+    type(grid_type),       intent(out) :: grid
+    integer :: b
+    call read_grid(file_name,n_dim,n_ghost,n_skip,grid)
+    do b = 1,grid%n_blocks
+      call grid%gblock(b)%grid_vars%setup( grid%gblock(b) )
+    end do
+    grid%total_int_cells  = sum( grid%gblock%total_cells )
+    grid%total_int_volume = sum( grid%gblock%total_volume )
+  end subroutine setup_grid_read
+
   subroutine setup_grid_generate( n_dim, n_nodes, n_ghost, n_skip, grid, delta,        &
                                   end_pts, x1_map, x2_map, x3_map )
     use grid_derived_type,    only : grid_type
@@ -7582,7 +8007,7 @@ contains
     procedure(map_1D_fun), optional    :: x1_map, x2_map, x3_map
 
     call grid%setup(n_dim,1)
-    call grid%gblock(1)%setup(n_dim,n_nodes,n_ghost,n_skip=n_skip)
+    call grid%gblock(1)%setup( 1, n_dim,n_nodes,n_ghost,n_skip=n_skip)
     ! call grid%gblock(1)%set_nodes( sphere_mesh(    n_nodes(1),                 &
     !                                                n_nodes(2),                 &
     !                                                n_nodes(3),                 &
@@ -8040,7 +8465,10 @@ program main
     end do
   end do
 
-  call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
+  ! call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
+  ! setup_grid_read(file_name, n_dim, n_ghost, n_skip, grid)
+  call setup_grid('/mnt/c/Users/wajordan/Desktop/_kt0257x0065/kt.grd',n_dim,n_ghost,n_skip,grid)
+  n_nodes = grid%gblock(1)%n_nodes
 
   allocate( pts(3,n_t_pts) )
   ! allocate( pts(3,n_pts) )
