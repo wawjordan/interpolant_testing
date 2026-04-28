@@ -802,8 +802,9 @@ contains
     integer, dimension(dim),        intent(in)  :: cell_bnd_min, cell_bnd_max
     integer, dimension(dim,2**dim), intent(out) :: nbor_cell_idx
     integer,                        intent(out) :: n_nbors
-    integer, dimension(dim) :: sz, tmp_idx, offset1, offset2, offset3
+    integer, dimension(dim) :: sz, tmp_idx, offset, offset2, offset3
     integer :: j
+    integer, dimension(:,:), allocatable :: cells
 
     ! if on max bound, offsets in that direction are negative only
     ! if on min bound, offsets in that direction are positive only
@@ -824,18 +825,31 @@ contains
     where ( cell_bnd_max - cell_bnd_min == 0 ) sz = 1
     nbor_cell_idx = 0
     n_nbors       = 0
-    offset1       = 0
-    where ( node_idx == cell_bnd_max+1 )
-      offset1 = -1
-    end where
-    offset3   = -1
-    where ( node_idx == 1 )
-      offset3 =  1
-    end where
+    ! offset1       = 0
+    ! where ( node_idx == cell_bnd_max+1 )
+    !   offset1 = -1
+    ! end where
+    ! offset3   = -1
+    ! where ( node_idx == 1 )
+    !   offset3 =  1
+    ! end where
+
+    ! allocate( cells(dim,product(sz)))
+    ! do j = 1,product(sz)
+    !   cells(:,j) = global2local(j,sz)-2
+    !   ! where ( cell_bnd_max - cell_bnd_min /= 0 ) cells(:,j) = cells(:,j) - 1
+    !   where ( node_idx == 1 ) cells(:,j) = cells(:,j) + 1
+    ! end do
+    
+
+    ! deallocate( cells )
+
 
     do j = 1,product(sz)
-      offset2 = global2local(j,sz)-1
-      tmp_idx = node_idx + offset2*offset3
+      offset = global2local(j,sz)-2
+      where ( cell_bnd_max - cell_bnd_min == 0 ) offset = 0
+      ! where ( node_idx == 1 ) offset = offset + 1
+      tmp_idx = node_idx + offset
       if ( in_bound( dim, tmp_idx, cell_bnd_min, cell_bnd_max ) ) then
         n_nbors = n_nbors + 1
         nbor_cell_idx(:,n_nbors) = tmp_idx
@@ -2261,6 +2275,9 @@ module math
   public :: rand_int_in_range, rand_coord_in_range
   public :: compute_pseudo_inverse
   public :: careful_divide
+  public :: reflect_through_hyperplane, closest_point_on_hyperplane
+  public :: dist_to_2_pt_line, dist_to_3_pt_plane
+  public :: is_colinear, pt_in_line, pt_in_triangle
 
   interface LUsolve
     module procedure LUsolve_single_rhs
@@ -2418,59 +2435,6 @@ contains
     call LUsolve_multiple_rhs( inv, LU, P, bin, m, m )
   end subroutine mat_inv_LU
 
-  pure subroutine linear_solve_LU( m, A, b, x, status )
-    use set_constants, only : zero, one
-    integer,                  intent(in)  :: m
-    real(dp), dimension(m,m), intent(in)  :: A
-    real(dp), dimension(m),   intent(in)  :: b
-    real(dp), dimension(m),   intent(out) :: x
-    integer,  optional,       intent(out) :: status
-    real(dp), dimension(m,m) :: LU, P
-    integer :: stat
-    if (present(status)) status = 0
-    call LUdecomp(LU, P, A, m, status=stat )
-    if (present(status)) status = stat
-    x = zero
-    if ( stat /= 0 ) return
-    call LUsolve_single_rhs( x, LU, P, b, m )
-  end subroutine linear_solve_LU
-
-  pure subroutine linear_solve_1x1(A,b,x,status)
-    use set_constants, only : zero
-    real(dp), dimension(1,1), intent(in)  :: A
-    real(dp), dimension(1),   intent(in)  :: b
-    real(dp), dimension(1),   intent(out) :: x
-    integer,  optional,       intent(out) :: status
-    real(dp) :: det
-    if ( present(status) ) status = 0
-    x = b
-    det = A(1,1)
-    if ( abs(det) > zero ) then
-      x = b/det
-    else
-      if ( present(status) ) status = -1
-    end if
-  end subroutine linear_solve_1x1
-
-  pure subroutine linear_solve_2x2(A,b,x,status)
-    use set_constants, only : zero
-    real(dp), dimension(2,2), intent(in)  :: A
-    real(dp), dimension(2),   intent(in)  :: b
-    real(dp), dimension(2),   intent(out) :: x
-    integer,  optional,       intent(out) :: status
-    real(dp) :: det
-    if ( present(status) ) status = 0
-    x(1) = A(2,2)*b(1) - A(1,2)*b(2)
-    x(2) = A(1,1)*b(2) - A(2,1)*b(1)
-    det = det_2x2(A)
-    if ( abs(det) > zero ) then
-      x = x/det
-    else
-      if ( present(status) ) status = -1
-    end if
-  end subroutine linear_solve_2x2
-
-
   pure subroutine mat_inv(mat,inv,status)
     use set_constants, only : zero
     real(dp), dimension(:,:),                     intent(in)  :: mat
@@ -2490,7 +2454,7 @@ contains
 
     select case(m)
     case(0)
-      if (present(status)) status = -1
+      if (present(status)) status = -2
     case(1)
       call mat_inv_1x1(mat,inv,status=status)
     case(2)
@@ -2501,6 +2465,65 @@ contains
       call mat_inv_LU(m,mat,inv,status=status)
     end select
   end subroutine mat_inv
+
+  pure subroutine linear_solve_LU( m, A, b, x, status )
+    use set_constants, only : zero, one
+    integer,                  intent(in)  :: m
+    real(dp), dimension(m,m), intent(in)  :: A
+    real(dp), dimension(m),   intent(in)  :: b
+    real(dp), dimension(m),   intent(out) :: x
+    integer,  optional,       intent(out) :: status
+    real(dp), dimension(m,m) :: LU, P
+    integer :: stat
+    if (present(status)) status = 0
+    call LUdecomp(LU, P, A, m, status=stat )
+    if (present(status)) status = stat
+    x = zero
+    if ( stat /= 0 ) return
+    call LUsolve_single_rhs( x, LU, P, b, m )
+  end subroutine linear_solve_LU
+
+  pure subroutine linear_solve_1x1(A,b,x,status)
+    use set_constants, only : zero, near_zero
+    real(dp), dimension(1,1), intent(in)  :: A
+    real(dp), dimension(1),   intent(in)  :: b
+    real(dp), dimension(1),   intent(out) :: x
+    integer,  optional,       intent(out) :: status
+    real(dp) :: det
+    if ( present(status) ) status = 0
+    x = b
+    det = A(1,1)
+    if ( abs(det) > zero ) then
+      x = b/det
+    else
+      if ( present(status) ) status = -1
+    end if
+
+    if ( present(status) ) then
+      if (abs(det) <= near_zero ) status = -1
+    end if
+  end subroutine linear_solve_1x1
+
+  pure subroutine linear_solve_2x2(A,b,x,status)
+    use set_constants, only : zero, near_zero
+    real(dp), dimension(2,2), intent(in)  :: A
+    real(dp), dimension(2),   intent(in)  :: b
+    real(dp), dimension(2),   intent(out) :: x
+    integer,  optional,       intent(out) :: status
+    real(dp) :: det
+    if ( present(status) ) status = 0
+    x(1) = A(2,2)*b(1) - A(1,2)*b(2)
+    x(2) = A(1,1)*b(2) - A(2,1)*b(1)
+    det = det_2x2(A)
+    if ( abs(det) > zero ) then
+      x = x/det
+    else
+      if ( present(status) ) status = -1
+    end if
+    if ( present(status) ) then
+      if (abs(det) <= near_zero ) status = -1
+    end if
+  end subroutine linear_solve_2x2
 
   pure subroutine linear_solve(A,b,x,status)
     use set_constants, only : zero
@@ -2516,7 +2539,7 @@ contains
     n = size(A,2)
 
     if ( m /= n ) then
-      if (present(status)) status = -1
+      if (present(status)) status = -2
       return
     end if
 
@@ -2547,7 +2570,7 @@ contains
 
   pure subroutine LUdecomp( LU, P, A, m, status )
     use set_precision, only : dp
-    use set_constants, only : zero, one
+    use set_constants, only : zero, one, near_zero
     real(dp), dimension(m,m), intent(out) :: LU,P
     real(dp), dimension(m,m), intent(in)  :: A
     integer,                  intent(in)  :: m
@@ -2581,6 +2604,9 @@ contains
         end do
       else
         if (present(status)) status = -1
+      end if
+      if ( present(status) ) then
+        if (abs(LU(col,col)) <= near_zero ) status = -1
       end if
     end do
   end subroutine LUdecomp
@@ -2818,6 +2844,130 @@ contains
     deallocate( V_Sinv )
 
   end subroutine compute_pseudo_inverse
+
+  pure function reflect_through_hyperplane(p1, a, o) result(p2)
+    use set_constants, only : two
+    real(dp), dimension(:), intent(in) :: p1, a, o
+    real(dp), dimension(size(p1))      :: p2
+    p2  = p1 - two*dot_product(p1-o,a)*a/dot_product(a,a)
+  end function reflect_through_hyperplane
+
+  pure function closest_point_on_hyperplane(p1, a, o) result(p2)
+    real(dp), dimension(:), intent(in) :: p1, a, o
+    real(dp), dimension(size(p1))      :: p2
+    p2  = p1 - dot_product(p1-o,a)*a/dot_product(a,a)
+  end function closest_point_on_hyperplane
+
+  pure subroutine dist_to_2_pt_line(P,A,B,dist,tol,intersect,pt)
+    real(dp), dimension(3),           intent(in)  :: P, A, B
+    real(dp),                         intent(out) :: dist
+    real(dp),               optional, intent(in)  :: tol
+    logical,                optional, intent(out) :: intersect
+    real(dp), dimension(3), optional, intent(out) :: pt
+    dist = norm2( cross_product( P-A, P-B ) ) / norm2( B - A )
+    if (present(intersect)) then
+      call pt_in_line(P,A,B,intersect,tol=tol)
+      if ( .not. intersect ) then
+        dist = min(dist,norm2(P-A),norm2(P-B))
+      end if
+    end if
+  end subroutine dist_to_2_pt_line
+
+  pure subroutine dist_to_3_pt_plane(P,A,B,C,dist,tol,intersect,pt)
+    use set_constants, only : zero
+    real(dp), dimension(3),           intent(in)  :: P, A, B, C
+    real(dp),                         intent(out) :: dist
+    real(dp),               optional, intent(in)  :: tol
+    logical,                optional, intent(out) :: intersect
+    real(dp), dimension(3), optional, intent(out) :: pt
+    real(dp), dimension(3) :: n
+    real(dp) :: tol_, den, tmp
+    logical :: intersect_
+    tol_ = zero
+    if ( present(tol) ) tol_ = tol
+    n = cross_product(A-B,A-C)
+    den = norm2(n)
+    if ( den > tol_) then
+      if ( present(pt) ) pt = closest_point_on_hyperplane(P,n,n*zero)
+      dist = abs( dot_product( n, P-A ) ) / den
+      if ( present(intersect) ) then
+        call pt_in_triangle(P,A,B,C,intersect,tol=tol)
+        if ( .not. intersect ) then
+          dist = min(dist,norm2(P-A),norm2(P-B),norm2(P-C))
+        end if
+      end if
+    else ! collinear
+      if ( present(pt) ) pt = A + (B-A)*dot_product(A-P,B-A)/dot_product(B-A,B-A)
+      call dist_to_2_pt_line(P,A,B,tmp,tol=tol,intersect=intersect_)
+      dist = tmp
+      if ( present(intersect) ) intersect = intersect_
+      if (intersect_) return
+      call dist_to_2_pt_line(P,A,C,tmp,tol=tol,intersect=intersect_)
+      dist = min(dist,tmp)
+      if ( present(intersect) ) intersect = intersect_
+      if (intersect_) return
+      call dist_to_2_pt_line(P,B,C,tmp,tol=tol,intersect=intersect_)
+      dist = min(dist,tmp)
+      if ( present(intersect) ) intersect = intersect_
+      if (intersect_) return
+
+    end if
+  end subroutine dist_to_3_pt_plane
+
+  pure function is_colinear(A,B,C,tol)
+    use set_constants, only : zero
+    real(dp), dimension(3), intent(in) :: A,B,C
+    real(dp), optional,     intent(in) :: tol
+    logical                            :: is_colinear
+    real(dp) :: tol_
+    tol_ = zero
+    if ( present(tol) ) tol_ = tol
+    is_colinear = norm2(cross_product(A-B,A-C)) > tol_
+  end function is_colinear
+
+  pure subroutine pt_in_triangle(P,A,B,C,in_triangle,tol)
+    use set_constants, only : near_zero, zero, one
+    real(dp), dimension(3), intent(in)  :: P,A,B,C
+    logical,                intent(out) :: in_triangle
+    real(dp),     optional, intent(in)  :: tol
+    real(dp), dimension(3) :: v0, v1, v2
+    real(dp) :: d00, d01, d02, d11, d12, den, u, v, tol_
+    tol_ = zero
+    if ( present(tol) ) tol_ = tol
+    v0 = C - A
+    v1 = B - A
+    v2 = P - A
+    d00 = dot_product(v0, v0)
+    d01 = dot_product(v0, v1)
+    d02 = dot_product(v0, v2)
+    d11 = dot_product(v1, v1)
+    d12 = dot_product(v1, v2)
+    den = (d00 * d11 - d01 * d01)
+    ! if ( den<near_zero ) then ! collinear
+    !   if ( norm2(cross_product(v1,v2)) > )
+    u = (d11 * d02 - d01 * d12) / den
+    v = (d00 * d12 - d01 * d02) / den
+
+    
+    in_triangle = (u >= zero - tol_) &
+            .and. (v >= zero - tol_) &
+            .and. ( (u + v) < one + tol_)
+  end subroutine pt_in_triangle
+
+  pure subroutine pt_in_line(P,A,B,in_line,tol)
+    use set_constants, only : near_zero, zero, one
+    real(dp), dimension(3), intent(in)  :: P,A,B
+    logical,                intent(out) :: in_line
+    real(dp),     optional, intent(in)  :: tol
+    real(dp), dimension(3) :: v1, v2
+    real(dp) :: tol_, t
+    tol_ = zero
+    if ( present(tol) ) tol_ = tol
+    v1 = B - A
+    v2 = P - A
+    t = dot_product(v1,v2) / sum(v1**2)
+    in_line = ( t >= zero - tol_ ).and.( t < one + tol_ )
+  end subroutine pt_in_line
 
 end module math
 
@@ -3726,7 +3876,7 @@ module interpolant_derived_type
     procedure, public, pass :: create  => create_interpolant_w_3D_data
     procedure, public, pass :: destroy => destroy_interpolant_w_3D_data
     procedure, public, pass :: pt_interp
-    procedure, public, pass :: pt_dist_fun
+    procedure, public, pass :: pt_dist_fun, nearest_pt
     procedure, public, pass :: min_distance
   end type interpolant_w_3D_data_t
 
@@ -3875,7 +4025,7 @@ contains
   end function mth_order_polynomial_derivative_matrix
 
   pure subroutine lagbary(this,x,dir,fval,Npts,val)
-    class(interpolant_t),    intent(in)  :: this
+    class(interpolant_t),   intent(in)  :: this
     real(dp),               intent(in)  :: x
     integer,                intent(in)  :: dir
     integer,  dimension(:), intent(in)  :: Npts
@@ -3900,7 +4050,7 @@ contains
   end subroutine lagbary
 
   pure subroutine lagbary_wderiv(this,x,dir,fval,Npts,val,dval)
-    class(interpolant_t),    intent(in)  :: this
+    class(interpolant_t),   intent(in)  :: this
     real(dp),               intent(in)  :: x
     integer,                intent(in)  :: dir
     integer,  dimension(:), intent(in)  :: Npts
@@ -3932,7 +4082,7 @@ contains
   end subroutine lagbary_wderiv
 
   pure subroutine lagbary_wderiv2(this,x,dir,fval,Npts,val,dval,d2val)
-    class(interpolant_t),    intent(in)  :: this
+    class(interpolant_t),   intent(in)  :: this
     real(dp),               intent(in)  :: x
     integer,                intent(in)  :: dir
     integer,  dimension(:), intent(in)  :: Npts
@@ -3972,7 +4122,7 @@ contains
   end subroutine lagbary_wderiv2
 
   pure subroutine lagbary_2D(this,x,fval,Npts,val)
-    class(interpolant_t),      intent(in)  :: this
+    class(interpolant_t),     intent(in)  :: this
     real(dp), dimension(2),   intent(in)  :: x
     real(dp), dimension(:,:), intent(in)  :: fval
     integer,  dimension(2),   intent(in)  :: Npts
@@ -3986,7 +4136,7 @@ contains
   end subroutine lagbary_2D
 
   pure subroutine lagbary_2D_wgrad(this,x,fval,Npts,val,grad)
-    class(interpolant_t),      intent(in)  :: this
+    class(interpolant_t),     intent(in)  :: this
     real(dp), dimension(2),   intent(in)  :: x
     real(dp), dimension(:,:), intent(in)  :: fval
     integer,  dimension(2),   intent(in)  :: Npts
@@ -4002,7 +4152,7 @@ contains
   end subroutine lagbary_2D_wgrad
 
   pure subroutine lagbary_2D_whess(this,x,fval,Npts,val,grad,hess)
-    class(interpolant_t),      intent(in)  :: this
+    class(interpolant_t),     intent(in)  :: this
     real(dp), dimension(2),   intent(in)  :: x
     real(dp), dimension(:,:), intent(in)  :: fval
     integer,  dimension(2),   intent(in)  :: Npts
@@ -4020,7 +4170,7 @@ contains
   end subroutine lagbary_2D_whess
 
   pure subroutine lagbary_3D(this,x,fval,Npts,val)
-    class(interpolant_t),        intent(in)  :: this
+    class(interpolant_t),       intent(in)  :: this
     real(dp), dimension(3),     intent(in)  :: x
     real(dp), dimension(:,:,:), intent(in)  :: fval
     integer,  dimension(3),     intent(in)  :: Npts
@@ -4040,7 +4190,7 @@ contains
   end subroutine lagbary_3D
 
   pure subroutine lagbary_3D_wgrad(this,x,fval,Npts,val,grad)
-    class(interpolant_t),        intent(in)  :: this
+    class(interpolant_t),       intent(in)  :: this
     real(dp), dimension(3),     intent(in)  :: x
     real(dp), dimension(:,:,:), intent(in)  :: fval
     integer,  dimension(3),     intent(in)  :: Npts
@@ -4064,7 +4214,7 @@ contains
   end subroutine lagbary_3D_wgrad
 
   pure subroutine lagbary_3D_whess(this,x,fval,Npts,val,grad,hess)
-    class(interpolant_t),        intent(in)  :: this
+    class(interpolant_t),       intent(in)  :: this
     real(dp), dimension(3),     intent(in)  :: x
     real(dp), dimension(:,:,:), intent(in)  :: fval
     integer,  dimension(3),     intent(in)  :: Npts
@@ -4284,6 +4434,100 @@ contains
   !   if ( allocated(X3_tmp) ) deallocate(X3_tmp)
   ! end function normal_vectors
 
+  pure subroutine get_nearest_node_1D(this,xyz,X1,X2,X3,node,dist,loc1,loc2,loc3)
+    use set_constants, only : zero, large
+    type(interpolant_t),              intent(in)  :: this
+    real(dp), dimension(3),           intent(in)  :: xyz
+    real(dp), dimension(:),           intent(in)  :: X1, X2, X3
+    real(dp), dimension(1),           intent(out) :: node
+    real(dp),               optional, intent(out) :: dist
+    integer,  dimension(1), optional, intent(out) :: loc1, loc2, loc3
+    integer,  dimension(1) :: Npts, loc
+    logical,  dimension(size(X1)) :: mask
+    real(dp), dimension(size(X1)) :: tmp_dist
+    Npts = shape(X1)
+    mask     = .true.
+    tmp_dist = sqrt( (X1-xyz(1))**2 + (X2-xyz(2))**2 + (X3-xyz(3))**2 )
+    loc = minloc( tmp_dist )
+    node(1) = this%xb(loc(1),Npts(1))
+
+    if ( present(dist) ) dist = tmp_dist(loc(1))
+    if ( present(loc1) ) loc1 = loc
+
+    mask(loc(1)) = .false.
+    loc = minloc( tmp_dist, mask=mask )
+    if ( present(loc2) ) loc2 = loc
+
+    mask(loc(1)) = .false.
+    loc = minloc( tmp_dist, mask=mask )
+    if ( present(loc3) ) loc3 = loc
+    
+  end subroutine get_nearest_node_1D
+
+  pure subroutine get_nearest_node_2D(this,xyz,X1,X2,X3,node,dist,loc1,loc2,loc3)
+    use set_constants, only : zero, large
+    type(interpolant_t),              intent(in)  :: this
+    real(dp), dimension(3),           intent(in)  :: xyz
+    real(dp), dimension(:,:),         intent(in)  :: X1, X2, X3
+    real(dp), dimension(2),           intent(out) :: node
+    real(dp),               optional, intent(out) :: dist
+    integer,  dimension(2), optional, intent(out) :: loc1, loc2, loc3
+    integer,  dimension(2) :: Npts, loc
+    logical,  dimension(size(X1,1),size(X1,2)) :: mask
+    real(dp), dimension(size(X1,1),size(X1,2)) :: tmp_dist
+    Npts = shape(X1)
+    mask     = .true.
+    tmp_dist = sqrt( (X1-xyz(1))**2 + (X2-xyz(2))**2 + (X3-xyz(3))**2 )
+    loc = minloc( tmp_dist )
+    node(1) = this%xb(loc(1),Npts(1))
+    node(2) = this%xb(loc(2),Npts(2))
+
+    if ( present(dist) ) dist = tmp_dist(loc(1),loc(2))
+
+    if ( present(loc1) ) loc1 = loc
+
+    mask(loc(1),loc(2)) = .false.
+    loc = minloc( tmp_dist, mask=mask )
+    if ( present(loc2) ) loc2 = loc
+
+    mask(loc(1),loc(2)) = .false.
+    loc = minloc( tmp_dist, mask=mask )
+    if ( present(loc3) ) loc3 = loc
+    
+  end subroutine get_nearest_node_2D
+
+  pure subroutine get_nearest_node_3D(this,xyz,X1,X2,X3,node,dist,loc1,loc2,loc3)
+    use set_constants, only : zero, large
+    type(interpolant_t),              intent(in)  :: this
+    real(dp), dimension(3),           intent(in)  :: xyz
+    real(dp), dimension(:,:,:),       intent(in)  :: X1, X2, X3
+    real(dp), dimension(3),           intent(out) :: node
+    real(dp),               optional, intent(out) :: dist
+    integer,  dimension(3), optional, intent(out) :: loc1, loc2, loc3
+    integer,  dimension(3) :: Npts, loc
+    logical,  dimension(size(X1,1),size(X1,2),size(X1,3)) :: mask
+    real(dp), dimension(size(X1,1),size(X1,2),size(X1,3)) :: tmp_dist
+    Npts = shape(X1)
+    mask     = .true.
+    tmp_dist = sqrt( (X1-xyz(1))**2 + (X2-xyz(2))**2 + (X3-xyz(3))**2 )
+    loc = minloc( tmp_dist )
+    node(1) = this%xb(loc(1),Npts(1))
+    node(2) = this%xb(loc(2),Npts(2))
+    node(3) = this%xb(loc(3),Npts(3))
+
+    if ( present(dist) ) dist = tmp_dist(loc(1),loc(2),loc(3))
+
+    if ( present(loc1) ) loc1 = loc
+
+    mask(loc(1),loc(2),loc(3)) = .false.
+    loc = minloc( tmp_dist, mask=mask )
+    if ( present(loc2) ) loc2 = loc
+
+    mask(loc(1),loc(2),loc(3)) = .false.
+    loc = minloc( tmp_dist, mask=mask )
+    if ( present(loc3) ) loc3 = loc
+  end subroutine get_nearest_node_3D
+
   pure subroutine map_point_3D_curve(this,point,X1,X2,X3,xyz,dS)
     class(interpolant_t),   intent(in)  :: this
     real(dp), dimension(1), intent(in)  :: point ! [t]
@@ -4336,7 +4580,7 @@ contains
   end subroutine map_point_3D_volume
 
   pure function curv_pt_interp(this,X1,X2,X3,pt) result(xyz)
-    type(interpolant_t),   intent(in) :: this
+    type(interpolant_t),    intent(in) :: this
     real(dp), dimension(:), intent(in) :: X1, X2, X3
     real(dp),               intent(in) :: pt
     real(dp), dimension(3)             :: xyz
@@ -4619,6 +4863,50 @@ contains
     end select
   end function pt_interp
 
+  pure subroutine nearest_pt(this,dim,xyz_pt,pt,tol,dist,dist_est,xyz_out)
+    use math, only : dist_to_2_pt_line, dist_to_3_pt_plane
+    class(interpolant_w_3D_data_t),   intent(in)  :: this
+    integer,                          intent(in)  :: dim
+    real(dp), dimension(3),           intent(in)  :: xyz_pt
+    real(dp), dimension(dim),         intent(out) :: pt
+    real(dp),               optional, intent(in)  :: tol
+    real(dp),               optional, intent(out) :: dist
+    real(dp),               optional, intent(out) :: dist_est
+    real(dp), dimension(3), optional, intent(out) :: xyz_out
+    integer,  dimension(dim) :: loc1, loc2, loc3
+    real(dp), dimension(3) :: A, B, C
+    logical :: intersect
+    if ( present(dist_est) ) then
+      select case(dim)
+      case(1)
+        call get_nearest_node_1D( this%interpolant_t, xyz_pt, this%X1(:,1,1), this%X2(:,1,1), this%X3(:,1,1), pt, dist=dist, loc1=loc1, loc2=loc2 )
+        A = [this%X1(loc1(1),1,1),this%X2(loc1(1),1,1),this%X3(loc1(1),1,1)]
+        B = [this%X1(loc2(1),1,1),this%X2(loc2(1),1,1),this%X3(loc2(1),1,1)]
+        call dist_to_2_pt_line( xyz_pt, A, B, dist_est, tol=tol, intersect=intersect, pt=xyz_out )
+      case(2)
+        call get_nearest_node_2D( this%interpolant_t, xyz_pt, this%X1(:,:,1), this%X2(:,:,1), this%X3(:,:,1), pt, dist=dist, loc1=loc1, loc2=loc2, loc3=loc3 )
+        A = [this%X1(loc1(1),loc1(2),1),this%X2(loc1(1),loc1(2),1),this%X3(loc1(1),loc1(2),1)]
+        B = [this%X1(loc2(1),loc2(2),1),this%X2(loc2(1),loc2(2),1),this%X3(loc2(1),loc2(2),1)]
+        C = [this%X1(loc3(1),loc3(2),1),this%X2(loc3(1),loc3(2),1),this%X3(loc3(1),loc3(2),1)]
+        call dist_to_3_pt_plane( xyz_pt, A, B, C, dist_est, tol=tol, intersect=intersect, pt=xyz_out )
+      case(3)
+        ! could check for intersection with tetrahedron...
+        call get_nearest_node_3D( this%interpolant_t, xyz_pt, this%X1(:,:,:), this%X2(:,:,:), this%X3(:,:,:), pt, dist=dist )
+        dist_est = dist
+      end select
+    else
+      select case(dim)
+      case(1)
+        call get_nearest_node_1D( this%interpolant_t, xyz_pt, this%X1(:,1,1), this%X2(:,1,1), this%X3(:,1,1), pt, dist=dist )
+      case(2)
+        call get_nearest_node_2D( this%interpolant_t, xyz_pt, this%X1(:,:,1), this%X2(:,:,1), this%X3(:,:,1), pt, dist=dist )
+      case(3)
+        call get_nearest_node_3D( this%interpolant_t, xyz_pt, this%X1(:,:,:), this%X2(:,:,:), this%X3(:,:,:), pt, dist=dist )
+      end select
+      if ( present(xyz_out) ) xyz_out = this%pt_interp(pt)
+    end if
+    end subroutine nearest_pt
+
   pure subroutine pt_dist_fun(this,xyz_pt,pt,fval,dfval,d2fval)
     use set_constants, only : zero
     class(interpolant_w_3D_data_t), intent(in) :: this
@@ -4663,17 +4951,16 @@ contains
     real(dp), dimension(this%n_dim,this%n_dim) :: d2fk
     real(dp) :: dfk0norm, dk0norm, fk0, fk, fkp1, eta, gamma_, c1_, c2_
     real(dp) :: opttola, opttolr, stola, stolr, ftola, ftolr
-    real(dp) :: opta,    optr,    esa,   esr,   efa,   efr
-    integer :: k, max_iter_
+    real(dp) :: opta,    optr,    esa,   esr,   efa,   efr, dk_mag, m1, m2
+    integer :: j, k, max_iter_
     logical  :: wc1, wc2, converged, clip_
     real(dp), parameter :: h = 1.0e-6_dp
     ! real(dp) :: a_i, a_lo, a_hi, a_im1, f_0, f_i, f_im1, df_0, df_i, df_im1
     ! logical  :: zoom, line_conv
     ! integer  :: iter
-    ! real(dp), dimension(this%n_dim) :: dfk_alt
-    ! real(dp), dimension(this%n_dim,this%n_dim) :: d2fk_alt
-    ! real(dp), parameter :: h = 1.0e-6_dp
-    ! real(dp) :: f__, fp_, fm_, f_p, f_m, fpp, fpm, fmp, fmm
+    real(dp), dimension(this%n_dim) :: dfk_alt
+    real(dp), dimension(this%n_dim,this%n_dim) :: d2fk_alt
+    real(dp) :: f__, fp_, fm_, f_p, f_m, fpp, fpm, fmp, fmm
 
     if ( present(status) ) status = 0
 
@@ -4715,66 +5002,79 @@ contains
     eta = one
     
     
-    ! f__ = norm2( this%pt_interp(xk + [0.0_dp,0.0_dp]) - xyz_point )
-    ! fp_ = norm2( this%pt_interp(xk + [     h,0.0_dp]) - xyz_point )
-    ! fm_ = norm2( this%pt_interp(xk + [    -h,0.0_dp]) - xyz_point )
-    ! f_p = norm2( this%pt_interp(xk + [0.0_dp,     h]) - xyz_point )
-    ! f_m = norm2( this%pt_interp(xk + [0.0_dp,    -h]) - xyz_point )
-    ! fpp = norm2( this%pt_interp(xk + [     h,     h]) - xyz_point )
-    ! fpm = norm2( this%pt_interp(xk + [     h,    -h]) - xyz_point )
-    ! fmp = norm2( this%pt_interp(xk + [    -h,     h]) - xyz_point )
-    ! fmm = norm2( this%pt_interp(xk + [    -h,    -h]) - xyz_point )
+    f__ = norm2( this%pt_interp(xk + [0.0_dp,0.0_dp]) - xyz_point )
+    fp_ = norm2( this%pt_interp(xk + [     h,0.0_dp]) - xyz_point )
+    fm_ = norm2( this%pt_interp(xk + [    -h,0.0_dp]) - xyz_point )
+    f_p = norm2( this%pt_interp(xk + [0.0_dp,     h]) - xyz_point )
+    f_m = norm2( this%pt_interp(xk + [0.0_dp,    -h]) - xyz_point )
+    fpp = norm2( this%pt_interp(xk + [     h,     h]) - xyz_point )
+    fpm = norm2( this%pt_interp(xk + [     h,    -h]) - xyz_point )
+    fmp = norm2( this%pt_interp(xk + [    -h,     h]) - xyz_point )
+    fmm = norm2( this%pt_interp(xk + [    -h,    -h]) - xyz_point )
 
-    ! dfk_alt(1) = (fp_ - fm_)/(two*h)
-    ! dfk_alt(2) = (f_p - f_m)/(two*h)
+    dfk_alt(1) = (fp_ - fm_)/(two*h)
+    dfk_alt(2) = (f_p - f_m)/(two*h)
 
-    ! d2fk_alt(1,1) = (fp_ - two*f__ + fm_)/(h*h)
-    ! d2fk_alt(2,2) = (f_p - two*f__ + f_m)/(h*h)
-    ! d2fk_alt(1,2) = (fpp - fpm - fmp + fmm)/(four*h*h)
-    ! d2fk_alt(2,1) = d2fk_alt(1,2)
+    d2fk_alt(1,1) = (fp_ - two*f__ + fm_)/(h*h)
+    d2fk_alt(2,2) = (f_p - two*f__ + f_m)/(h*h)
+    d2fk_alt(1,2) = (fpp - fpm - fmp + fmm)/(four*h*h)
+    d2fk_alt(2,1) = d2fk_alt(1,2)
 
     call this%pt_dist_fun(xyz_point,xk,fk)
     dist = fk
     k = 1
-    if ( dist > zero) then
+    if ( dist > near_zero) then
       call this%pt_dist_fun(xyz_point,xk,fk,dfval=dfk,d2fval=d2fk)
-      call linear_solve(-d2fk,dfk,dk,status=status)
+      
+      if ( all( [(abs(d2fk(j,j))>h,j=1,this%n_dim)] ) ) then
+        call linear_solve(-d2fk,dfk,dk,status=status)
+        m1 = dot_product(dfk,dk)
+        if (m1>zero) then
+          dk = -dfk
+        end if
+      else
+        dk = -dfk
+      end if
+      m1 = dot_product(dfk,dk)
 
       fk0      = fk
       dk0norm  = norm2(dk)
       dfk0norm = maxval(abs(dfk))
 
       do k = 1,max_iter_
-        
-        eta = min(one,1.1_dp*eta)
-        call linear_solve(-d2fk,dfk,dk,status=status)
-        
+
+        if ( all( [(abs(d2fk(j,j))>h,j=1,this%n_dim)] ) ) then
+          call linear_solve(-d2fk,dfk,dk,status=status)
+          m1 = dot_product(dfk,dk)
+          if (m1>zero) then
+            dk = -dfk
+          end if
+        else
+          dk = -dfk
+        end if
+        m1 = dot_product(dfk,dk)
+
+        eta = min(one,eta/gamma_)
         ! backtracking loop
         do
-          
           xkp1 = xk + eta*dk
           esa = norm2(xkp1-xk) ! calculate change in step size
-          if (esa<stola) then
+          if ((esa<stola).or.(eta<h)) then
             exit
           end if
-
-          if ( clip_ ) xkp1 = min(max(xkp1,-one-h),one+h)
-          
+          if ( clip_ ) xkp1 = min( max( xkp1,-one-h), one+h)
           call this%pt_dist_fun(xyz_point,xkp1,fkp1,dfval=dfkp1)
 
           ! Wolfe conditions
           wc1 = fkp1 <= fk + c1_*eta*dot_product(dfk,dk)
           ! wc2 = abs( dot_product(dfkp1,dk) ) <= c2_*abs( dot_product(dfk,dk) )
           wc2 = dot_product(dfkp1,dk) >= c2_*dot_product(dfk,dk)
-          ! if ( wc1 ) then
-          !   exit
-          ! end if
-          if ( wc1.and.wc2 ) then
+          if ( wc1 ) then
             exit
           end if
           eta = gamma_*eta ! calculate new eta
         end do
-
+        
         ! 1st order optimality measure
         opta = maxval(abs(dfk))
         optr = opta / (dfk0norm + near_zero)
@@ -4814,6 +5114,8 @@ contains
       pt(1:this%n_dim) = xk
       dist = fk
       if (present(xyz_eval) ) xyz_eval = this%pt_interp(xk)
+    else
+      if (present(xyz_eval) ) xyz_eval = xyz_point
     end if
 
     if ( present(iter) ) iter = k
@@ -5933,9 +6235,11 @@ contains
     real(dp), dimension(:,:,:), allocatable :: face_nodes
     real(dp), dimension(3) :: xyz_out
     real(dp), dimension(2) :: uv
-    real(dp) :: dist
+    real(dp) :: dist, dist_est, dist_tmp
     integer :: i, dir, status, face_num
     type(interpolant_w_3D_data_t) :: interp
+    real(dp), dimension(3) :: xyz00, xyz10, xyz01, xyz11
+    real(dp), parameter :: h = 0.5_dp
 
     call gblock%get_candidate_faces(bnd_num,xyz_point,node_idx,n_faces,cell_idxs,min_dist)
     if (present(xyz_eval)) xyz_out = gblock%node_coords(:,node_idx(1),node_idx(2),node_idx(3))
@@ -5948,7 +6252,17 @@ contains
       call interp%create( pack(face_nodes(:,:,1),.true.), &
                           pack(face_nodes(:,:,2),.true.), &
                           pack(face_nodes(:,:,3),.true.), shape(face_nodes(:,:,1)) )
-      uv = zero
+      ! uv = zero
+      call interp%nearest_pt(2,xyz_point,uv,dist=dist, dist_est=dist_est, xyz_out=xyz_out)
+
+      if ( dist < min_dist ) then
+        min_dist = dist
+        face_num = i
+      end if
+      xyz00 = interp%pt_interp([-one,-one])
+      xyz10 = interp%pt_interp([-one+h,-one])
+      xyz01 = interp%pt_interp([-one,-one+h])
+      xyz11 = interp%pt_interp([-one+h,-one+h])
       call interp%min_distance(xyz_point,uv,dist,xyz_eval=xyz_eval,max_iter=max_iter,clip=clip,status=status)
       call interp%destroy()
       deallocate( face_nodes )
@@ -7117,20 +7431,20 @@ contains
 
     call grid%setup(n_dim,1)
     call grid%gblock(1)%setup(n_dim,n_nodes,n_ghost,n_skip=n_skip)
-    ! call grid%gblock(1)%set_nodes( sphere_mesh(    n_nodes(1),                 &
-    !                                                n_nodes(2),                 &
-    !                                                n_nodes(3),                 &
-    !                                                end_pts=end_pts,            &
-    !                                                r_fun=x1_map,               &
-    !                                                theta_fun=x2_map,           &
-    !                                                phi_fun=x3_map ) )
-    call grid%gblock(1)%set_nodes( annulus_mesh(   n_nodes(1),                 &
+    call grid%gblock(1)%set_nodes( sphere_mesh(    n_nodes(1),                 &
                                                    n_nodes(2),                 &
                                                    n_nodes(3),                 &
                                                    end_pts=end_pts,            &
                                                    r_fun=x1_map,               &
                                                    theta_fun=x2_map,           &
-                                                   z_fun=x3_map ) )
+                                                   phi_fun=x3_map ) )
+    ! call grid%gblock(1)%set_nodes( annulus_mesh(   n_nodes(1),                 &
+    !                                                n_nodes(2),                 &
+    !                                                n_nodes(3),                 &
+    !                                                end_pts=end_pts,            &
+    !                                                r_fun=x1_map,               &
+    !                                                theta_fun=x2_map,           &
+    !                                                z_fun=x3_map ) )
     if (present(delta) ) then
       call perturb_mesh( grid%gblock(1)%node_coords, delta )
     end if
@@ -7545,23 +7859,24 @@ program main
   integer, dimension(2) :: shp
   integer, dimension(:), allocatable :: bnd_nums
   real(dp) :: dist, min_dist, ex, err
-  integer :: n_iter, n_pts, n_bnds
+  integer :: n_iter, n_pts, n_t_pts, n_bnds
   integer :: i, j, cnt
   logical :: old
   character(100) :: zone_name
   character(*), parameter :: file_name='TEST_GRID.dat'
-  ! n_dim   = 3
-  ! n_nodes = [9,17,17]
-  ! n_ghost = [0,0,0]
-  ! n_skip  = [2,2,2]
-
-  n_dim   = 2
-  n_nodes = [9,17,1]
+  n_dim   = 3
+  n_nodes = [9,17,17]
   n_ghost = [0,0,0]
-  n_skip  = [2,2,0]
+  n_skip  = [2,2,2]
+
+  ! n_dim   = 2
+  ! n_nodes = [9,17,1]
+  ! n_ghost = [0,0,0]
+  ! n_skip  = [2,2,0]
 
   n_iter   = 100
   n_pts = 33
+  n_t_pts = n_pts**(n_dim-1)
   
   n_bnds = 2*n_dim
   allocate( bnd_nums(n_bnds) )
@@ -7575,25 +7890,27 @@ program main
 
   call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
 
-  ! allocate( pts(3,n_pts*n_pts) )
-  allocate( pts(3,n_pts) )
+  allocate( pts(3,n_t_pts) )
+  ! allocate( pts(3,n_pts) )
 
-  ! pts = reshape(sphere_mesh(1,n_pts,n_pts,end_pts=reshape([three,zero,fourth*pi,three,half*pi,three*fourth*pi],[3,2])),[3,n_pts*n_pts])
+  ! pts = reshape(sphere_mesh(1,n_pts,n_pts,end_pts=reshape([1.5_dp,zero,fourth*pi,1.5_dp,half*pi,three*fourth*pi],[3,2])),[3,n_t_pts])
+  pts = reshape(sphere_mesh(n_pts,1,n_pts,end_pts=reshape([1.0_dp,half*pi,fourth*pi,2.0_dp,half*pi,three*fourth*pi],[3,2])),[3,n_t_pts])
 
-  pts = reshape(annulus_mesh(1,n_pts,1,end_pts=reshape([1.5_dp,zero,zero,three,half*pi,zero],[3,2])),[3,n_pts])
+  ! pts = reshape(annulus_mesh(1,n_pts,1,end_pts=reshape([1.5_dp,zero,zero,three,half*pi,zero],[3,2])),[3,n_t_pts])
 
   call output_grid( grid, file_name )
   old = .true.
 
   
   allocate(out_vec(3,2))
-  do j = 1,n_pts
+  ! do j = 495,495 !1,n_t_pts
+  do j = 2,2!1,n_t_pts
     ! pt = rand_coord_in_range(3,[two,two,two],[three,three,three])
     pt = pts(:,j)
     ! pt = [2.3749641296722843_dp,1.8223740721795063_dp,-0.19620938769042878_dp]
     xyz_eval = zero
     min_dist = large
-    do i = 1,1 !n_bnds
+    do i = 4,4 !1,n_bnds
       call grid%gblock(1)%get_min_distance(bnd_nums(i),pt,dist,max_iter=n_iter,xyz_eval=xyz_tmp,clip=.true.,out_idx=cell_idx)
       if ( dist < min_dist ) then
         min_dist = dist
