@@ -6040,6 +6040,385 @@ contains
 
 end module quadrature_derived_type
 
+module face_info_type
+    use set_precision, only : dp
+  use set_constants, only : zero
+  use interpolant_derived_type, only : interpolant_w_3D_data_t
+  implicit none
+  private
+  public :: face_info_t
+  ! collect all wall info here prior to wall distance search
+  type face_info_t
+    integer                             :: block_id
+    integer                             :: face_label
+    real(dp), dimension(:), allocatable :: out_dir
+    type(interpolant_w_3D_data_t)       :: interp
+  contains
+    private
+    procedure, public :: destroy => destroy_face_info_t
+  end type face_info_t
+
+  interface constructor
+    module procedure :: face_info_t
+  end interface
+
+contains
+
+  pure elemental subroutine destroy_face_info_t( this )
+    class(face_info_t), intent(inout) :: this
+    this%face_label = 0
+    this%out_dir    = zero
+    call this%interp%destroy()
+  end subroutine destroy_face_info_t
+
+  pure function constructor( n_dim, block_id, face_label, cell_nodes ) result(this)
+    integer,                      intent(in) :: n_dim, block_id, face_label
+    real(dp), dimension(:,:,:,:), intent(in) :: cell_nodes
+    type(face_info_t)                      :: this
+    real(dp), dimension(:,:,:), allocatable :: face_nodes
+    integer, dimension(4) :: tmp
+    integer, dimension(3) :: skip, stride
+    integer, dimension(2) :: shp
+    integer :: dir
+    integer :: status
+
+    tmp  = shape(cell_nodes)
+    skip = tmp(2:4) - 1
+    stride = 1
+    dir    = face_label
+    call get_face_coords_from_cell( shp, skip, stride, dir, cell_nodes, status=status )
+    allocate( face_nodes(shp(1),shp(2),3) )
+    call this%interp%create( pack(face_nodes(:,:,1),.true.), &
+                             pack(face_nodes(:,:,2),.true.), &
+                             pack(face_nodes(:,:,3),.true.), shape(face_nodes(:,:,1)) )
+    deallocate( face_nodes )
+
+    this%block_id   = block_id
+    this%face_label = face_label
+    this%out_dir    = zero
+  end function constructor
+
+  pure subroutine get_face_coords_from_cell( shp, skip, stride, dir, coords_in, coords_out, status )
+    integer, dimension(2),                              intent(inout) :: shp
+    integer, dimension(3),                              intent(in)    :: skip
+    integer, dimension(3),                              intent(in)    :: stride
+    integer,                                            intent(in)    :: dir
+    real(dp), dimension( 3, skip(1),skip(2),skip(3) ),  intent(in)    :: coords_in
+    real(dp), dimension(shp(1),shp(2),3), optional,     intent(out)   :: coords_out
+    integer,                              optional,     intent(out)   :: status
+    integer, dimension(3) :: lo, hi
+
+    if ( present(status) ) status = 0
+    lo = 1
+    hi = 1 + skip
+
+    select case (dir)
+      case(-1)
+        hi(1) = lo(1)
+        shp   = [skip(2),skip(3)] + 1
+      case( 1)
+        lo(1) = hi(1)
+        shp   = [skip(2),skip(3)] + 1
+      case(-2)
+        hi(2) = lo(2)
+        shp   = [skip(1),skip(3)] + 1
+      case( 2)
+        lo(2) = hi(2)
+        shp   = [skip(1),skip(3)] + 1
+      case(-3)
+        hi(3) = lo(3)
+        shp   = [skip(1),skip(2)] + 1
+      case( 3)
+        lo(3) = hi(3)
+        shp   = [skip(1),skip(2)] + 1
+      case default
+        if ( present(status) ) status = -1
+        return
+    end select
+
+    if ( present(coords_out) ) then
+      if ( any( shape(coords_out) /= [shp(1),shp(2),3] ) ) then
+        if ( present(status) ) status = -2
+        return
+      else
+        coords_out = reshape( pack( coords_in(:,lo(1):hi(1):stride(1),           &
+                                                lo(2):hi(2):stride(2),           &
+                                                lo(3):hi(3):stride(3) ),.true.), &
+                                                [shp(1),shp(2),3],     &
+                                                order=[3,1,2] )
+      end if
+    end if
+
+  end subroutine get_face_coords_from_cell
+
+end module face_info_type
+#if FALSE
+module wall_info_type
+  use set_precision, only : dp
+  use set_constants, only : zero
+  use face_info_type, only : face_info_t
+  implicit none
+  private
+  public :: wall_info_t
+  ! collect all wall info here prior to wall distance search
+
+  type face_info_holder
+    type(face_info_t), allocatable :: f
+  contains
+    private
+    procedure, public :: destroy => destroy_face_info_holder
+  end type face_info_holder
+  type wall_info_t
+    integer :: n_dim, n_faces
+    type(face_info_holder), dimension(:), allocatable :: faces
+  contains
+    private
+    procedure, public :: create  => create_wall_info_t
+    procedure, public :: destroy => destroy_wall_info_t
+  end type wall_info_t
+
+contains
+
+  pure elemental subroutine destroy_face_info_holder( this )
+    class(face_info_holder), intent(inout) :: this
+    if ( allocated( this%f ) ) then
+      call this%f%destroy()
+      deallocate( this%f )
+    end if
+  end subroutine destroy_face_info_holder
+
+  pure elemental subroutine destroy_wall_info_t( this )
+    class(wall_info_t), intent(inout) :: this
+    if ( allocated(this%faces) ) then
+      call this%faces%destroy()
+      deallocate( this%faces )
+    end if
+    this%n_faces = 0
+    this%n_dim   = 0
+  end subroutine destroy_wall_info_t
+
+  pure subroutine create_wall_info_t( this, n_dim, n_faces )
+    class(wall_info_t), intent(inout) :: this
+    integer,            intent(in)    :: n_dim, n_faces
+
+    call this%destroy()
+    this%n_dim   = n_dim
+    this%n_faces = n_faces
+    allocate( this%faces(n_faces) )
+  end subroutine create_wall_info_t
+
+  pure subroutine add_faces( this, block_id, fidx, face_label, lo, hi, skip, stride, node_coords, w_lo, w_hi )
+    type(wall_info_t), intent(inout) :: this
+    integer,            intent(in)    :: block_id, fidx, face_label
+    integer, dimension(3), intent(in) :: lo, hi, skip, stride
+    real(dp), dimension(3,lo(1):hi(1),lo(2):hi(2),lo(3):hi(3)), intent(in) :: node_coords
+    integer, dimension(3), intent(in) :: w_lo, w_hi
+
+    integer, dimension(3) :: s, o, l,h
+    integer :: i,j,k, cnt
+
+    ! get cell nodes from cell adjacent to face
+    
+    s = stride
+    o = 0
+    ! do something with face_label to get the right indices
+
+    cnt = fidx
+    do k = w_lo(3),w_hi(3),stride(3)
+      do j = w_lo(2),w_hi(2),stride(2)
+        do i = w_lo(1),w_hi(1),stride(1)
+          cnt = cnt + 1
+          ! this%faces(cnt)%f = face_info_t( this%n_dim, block_id, face_label, node_coords(:,l(1):h(1):s(1),l(2):h(2):s(2),l(3):h(3):s(3)) )
+          this%faces(cnt)%f = face_info_t( 3, block_id, face_label, node_coords )
+        end do
+      end do
+    end do
+  end subroutine add_faces
+
+  pure subroutine get_face_coords_from_cell( shp, skip, stride, dir, coords_in, coords_out, status )
+    integer, dimension(2),                              intent(inout) :: shp
+    integer, dimension(3),                              intent(in)    :: skip
+    integer, dimension(3),                              intent(in)    :: stride
+    integer,                                            intent(in)    :: dir
+    real(dp), dimension( 3, skip(1),skip(2),skip(3) ),  intent(in)    :: coords_in
+    real(dp), dimension(shp(1),shp(2),3), optional,     intent(out)   :: coords_out
+    integer,                              optional,     intent(out)   :: status
+    integer, dimension(3) :: lo, hi
+
+    if ( present(status) ) status = 0
+    lo = 1
+    hi = 1 + skip
+
+    select case (dir)
+      case(-1)
+        hi(1) = lo(1)
+        shp   = [skip(2),skip(3)] + 1
+      case( 1)
+        lo(1) = hi(1)
+        shp   = [skip(2),skip(3)] + 1
+      case(-2)
+        hi(2) = lo(2)
+        shp   = [skip(1),skip(3)] + 1
+      case( 2)
+        lo(2) = hi(2)
+        shp   = [skip(1),skip(3)] + 1
+      case(-3)
+        hi(3) = lo(3)
+        shp   = [skip(1),skip(2)] + 1
+      case( 3)
+        lo(3) = hi(3)
+        shp   = [skip(1),skip(2)] + 1
+      case default
+        if ( present(status) ) status = -1
+        return
+    end select
+
+    if ( present(coords_out) ) then
+      if ( any( shape(coords_out) /= [shp(1),shp(2),3] ) ) then
+        if ( present(status) ) status = -2
+        return
+      else
+        coords_out = reshape( pack( coords_in(:,lo(1):hi(1):stride(1),           &
+                                                lo(2):hi(2):stride(2),           &
+                                                lo(3):hi(3):stride(3) ),.true.), &
+                                                [shp(1),shp(2),3],     &
+                                                order=[3,1,2] )
+      end if
+    end if
+
+  end subroutine get_face_coords_from_cell
+
+  ! pure subroutine get_candidate_faces(gblock,bnd_num,xyz_point,node_idx,n_faces,cell_idxs,min_dist)
+  !   use set_constants, only : large
+  !   use index_conversion, only : node_cell_nbors
+  !   class(grid_block),        intent(in)  :: gblock
+  !   integer,                  intent(in)  :: bnd_num
+  !   real(dp), dimension(3),   intent(in)  :: xyz_point
+  !   integer,  dimension(3),   intent(out) :: node_idx
+  !   integer,                  intent(out) :: n_faces
+  !   integer,  dimension(3,8), intent(out) :: cell_idxs
+  !   real(dp),                 intent(out) :: min_dist
+  !   integer, dimension(3) :: lo, hi, stride, offset, idx, tmp
+  !   integer :: n_dim
+  !   integer :: i,j,k,n
+  !   real(dp), dimension(3) :: coord
+  !   real(dp) :: dist
+
+  !   n_dim = gblock%n_dim
+
+  !   ! loop over all face nodes on face specified by bnd_num, and find closest node
+  !   lo    = 1
+  !   hi    =  gblock%n_nodes
+  !   stride = 1; stride(1:n_dim) = gblock%n_skip(1:n_dim)
+  !   offset = 0; offset(1:n_dim) = 1
+  !   select case(bnd_num)
+  !   case(-1) ! xi_min  
+  !     hi(1)     = 1
+  !     stride(1) = 1
+  !     offset(1) = 0
+  !   case(1) ! xi_max
+  !     lo(1)     = hi(1)
+  !     stride(1) = 1
+  !     offset(1) = 0
+  !   case(-2) ! eta_min
+  !     hi(2)     = 1
+  !     stride(2) = 1
+  !     offset(2) = 0
+  !   case(2) ! eta_max
+  !     lo(2)     = hi(2)
+  !     stride(2) = 1
+  !     offset(2) = 0
+  !   case(-3) ! zeta_min
+  !     hi(3)     = 1
+  !     stride(3) = 1
+  !     offset(3) = 0
+  !   case(3) ! zeta_max
+  !     lo(3)     = hi(3)
+  !     stride(3) = 1
+  !     offset(3) = 0
+  !   end select
+  !   min_dist = large
+  !   node_idx  = 1
+  !   do k = lo(3),hi(3),stride(3)
+  !     do j = lo(2),hi(2),stride(2)
+  !       do i = lo(1),hi(1),stride(1)
+  !         coord = gblock%node_coords(:,i,j,k)
+  !         dist  = norm2(xyz_point-coord)
+  !         if ( dist < min_dist ) then
+  !           min_dist = dist
+  !           node_idx = [i,j,k]
+  !         end if
+  !       end do
+  !     end do
+  !   end do
+
+  !   ! change to cell indexing
+  !   lo    = 1
+  !   hi    = 1
+  !   hi(1:n_dim) = (gblock%n_nodes(1:n_dim)-1)/gblock%n_skip(1:n_dim)
+  !   idx   = 1
+  !   idx(1:n_dim) = (node_idx(1:n_dim) - 1)/gblock%n_skip(1:n_dim) + 1
+  !   call node_cell_nbors( 3, idx, lo, hi, cell_idxs, n_faces )
+  !   lo = 1
+  ! end subroutine get_candidate_faces
+
+
+  ! pure subroutine get_min_distance(gblock,bnd_num,xyz_point,min_dist,clip,max_iter,xyz_eval,out_idx)
+  !   use set_constants,            only : zero, one
+  !   use interpolant_derived_type, only : interpolant_w_3D_data_t
+  !   class(grid_block),        intent(in)  :: gblock
+  !   integer,                  intent(in)  :: bnd_num
+  !   real(dp), dimension(3),   intent(in)  :: xyz_point
+  !   real(dp),                 intent(out) :: min_dist
+  !   logical,                optional, intent(in)   :: clip
+  !   integer,                optional, intent(in)   :: max_iter
+  !   real(dp), dimension(3), optional, intent(out)  :: xyz_eval
+  !   integer,  dimension(3), optional, intent(out)  :: out_idx
+    
+
+  !   integer                  :: n_faces
+  !   integer,  dimension(3)   :: node_idx
+  !   integer,  dimension(3,8) :: cell_idxs
+  !   integer, dimension(2) :: shp
+  !   real(dp), dimension(:,:,:), allocatable :: face_nodes
+  !   real(dp), dimension(3) :: xyz_out
+  !   real(dp), dimension(2) :: uv
+  !   real(dp) :: dist, dist_est, dist_tmp
+  !   integer :: i, dir, status, face_num
+  !   type(interpolant_w_3D_data_t) :: interp
+  !   real(dp), dimension(3) :: xyz00, xyz10, xyz01, xyz11
+  !   real(dp), parameter :: h = 0.5_dp
+
+  !   call gblock%get_candidate_faces(bnd_num,xyz_point,node_idx,n_faces,cell_idxs,min_dist)
+  !   if (present(xyz_eval)) xyz_out = gblock%node_coords(:,node_idx(1),node_idx(2),node_idx(3))
+  !   dir = bnd_num
+  !   face_num = 1
+  !   do i = 1,n_faces
+  !     call gblock%get_fg_face_nodes(cell_idxs(:,i),shp,dir)
+  !     allocate( face_nodes(shp(1),shp(2),3) )
+  !     call gblock%get_fg_face_nodes(cell_idxs(:,i),shp,dir,face_nodes=face_nodes)
+  !     call interp%create( pack(face_nodes(:,:,1),.true.), &
+  !                         pack(face_nodes(:,:,2),.true.), &
+  !                         pack(face_nodes(:,:,3),.true.), shape(face_nodes(:,:,1)) )
+  !     uv = zero
+  !     call interp%min_distance(xyz_point,uv,dist,xyz_eval=xyz_eval,max_iter=max_iter,clip=clip,status=status)
+  !     call interp%destroy()
+  !     deallocate( face_nodes )
+  !     ! out of bounds in parametric space
+  !     ! if (any(abs(uv) > one) ) continue
+  !     if ( dist < min_dist ) then
+  !       min_dist = dist
+  !       face_num = i
+  !       if (present(xyz_eval)) xyz_out = xyz_eval
+  !     end if
+  !   end do
+  !   if (present(xyz_eval)) xyz_eval = xyz_out
+  !   if (present(out_idx))  out_idx  = cell_idxs(:,face_num)
+  ! end subroutine get_min_distance
+
+end module wall_info_type
+#endif
+
 module grid_derived_type
   use set_precision,           only : dp
   use quadrature_derived_type, only : quad_t, quad_ptr_3D
@@ -6149,27 +6528,6 @@ module grid_derived_type
     procedure, public, pass   :: setup => init_grid_type
     procedure, public, pass :: destroy => deallocate_grid
   end type grid_type
-
-  ! type wall_bound_t
-
-  !   ! Indicies of the nodes that are along this non-slip wall boundary
-  !   integer, dimension(3) :: idx_min = 1
-  !   integer, dimension(3) :: idx_max = 1
-
-  !   ! Indicies of the cells that are along this non-slip wall boundary
-  !   integer, dimension(3) :: cell_idx_min = 1
-  !   integer, dimension(3) :: cell_idx_max = 1
-
-  !   integer, dimension(3) :: out_dir
-
-  !   integer :: face_label
-
-  !   !> x,y,z nodal coordinates for wall non-slip wall bc
-  !   real(dp), allocatable, dimension(:,:,:) :: wall_x
-  !   real(dp), allocatable, dimension(:,:,:) :: wall_y
-  !   real(dp), allocatable, dimension(:,:,:) :: wall_z
-
-  ! end type wall_bound_t
 
 contains
 
