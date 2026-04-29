@@ -695,6 +695,7 @@ module index_conversion
   public :: local2global, local2global_bnd, local2global_ghost
   public :: global2local_face, local2global_face
   public :: cell_face_nbors, node_cell_nbors
+  public :: get_face_id_from_node_list
   public :: get_face_idx_from_id
   public :: get_reshape_indices, get_dim_order
   public :: range_intersect, bound_intersect
@@ -713,6 +714,11 @@ module index_conversion
     module procedure node_cell_nbors_lin
     module procedure node_cell_nbors_sub
   end interface node_cell_nbors
+
+  interface get_face_id_from_node_list
+    module procedure get_face_id_from_node_list_
+    module procedure get_face_id_from_node_list_packed
+  end interface get_face_id_from_node_list
   
 contains
 
@@ -1022,6 +1028,150 @@ contains
     face_offset(dir) = offset
     face_idx = idx + face_offset
   end subroutine get_face_idx_from_id
+
+  ! pure function get_face_id_from_out_dir(out_dir) result(face_id)
+  !   integer, dimension(:), intent(in) :: out_dir
+  !   integer                           :: face_id
+  !   integer, dimension(1) :: dir
+  !   integer :: s
+  !   dir = findloc( abs(out_dir)>0, .true.)
+  !   s   = merge(1,2,out_dir(dir(1))<0)
+  !   face_id = 2*(dir(1)-1) + s
+  ! end function get_face_id_from_out_dir
+
+  pure subroutine get_face_id_from_node_list_( n_dim, bc_node_idx, face_id, min_bnd, max_bnd, status )
+    integer,                             intent(in)  :: n_dim
+    integer, dimension(:,:),             intent(in)  :: bc_node_idx
+    integer,                             intent(out) :: face_id
+    integer, dimension(:),     optional, intent(in)  :: min_bnd, max_bnd
+    integer, optional,                   intent(out) :: status
+    integer, dimension(n_dim) :: n_lo, n_hi, min_, max_
+    logical, dimension(n_dim) :: varies, lo, hi, dir
+    integer :: i, swap
+    if ( present(status) ) status = 0
+
+    face_id = 0
+    n_lo = bc_node_idx(1,1:n_dim)
+    n_hi = bc_node_idx(2,1:n_dim)
+    varies = ( (n_lo/=n_hi) )
+
+    ! not a valid face for n_dim
+    if ( count(varies) /= n_dim-1 ) then
+      if ( present(status) ) status = -1
+      return
+    end if
+
+    ! reorder if necessary
+    dir  = ( (n_hi-n_lo)>=0 )
+    do i = 1,n_dim
+      if ( dir(i) ) then
+        swap    = n_lo(i)
+        n_lo(i) = n_hi(i)
+        n_hi(i) = swap
+      end if
+    end do
+
+    min_ = 1
+    max_ = n_hi
+
+    if ( present(min_bnd) ) min_ = min(min_,min_bnd(1:n_dim))
+    if ( present(max_bnd) ) max_ = max(max_,max_bnd(1:n_dim))
+
+    lo = ( n_lo == min_ )
+    hi = ( n_hi == max_ )
+
+    do i = 1,n_dim
+      if ( .not. varies(i) ) then
+        if ( lo(i) .and. .not.(hi(i)) ) then
+          face_id = 2*(i-1)
+          return
+        elseif ( hi(i) .and. .not.(lo(i)) ) then
+          face_id = 2*(i-1) + 1
+          return
+        else ! interior (?)
+          if ( present(status) ) status = 1
+        end if
+      end if
+    end do
+
+  end subroutine get_face_id_from_node_list_
+
+  pure subroutine get_face_id_from_node_list_packed( n_dim, bc_node_idx, face_id, min_bnd, max_bnd, status )
+    integer,                             intent(in)  :: n_dim
+    integer, dimension(:),         intent(in)  :: bc_node_idx
+    integer,                             intent(out) :: face_id
+    integer, dimension(:),     optional, intent(in)  :: min_bnd, max_bnd
+    integer, optional,                   intent(out) :: status
+    call get_face_id_from_node_list_( n_dim, reshape(bc_node_idx,[2,size(bc_node_idx)/2]), face_id, min_bnd=min_bnd, max_bnd=max_bnd, status=status )
+  end subroutine get_face_id_from_node_list_packed
+
+  ! subroutine find_face_info( bc_node_idx, face_label, out_dir )
+
+  !   use set_constants,  only : IMIN_FACE, IMAX_FACE, JMIN_FACE, JMAX_FACE,     &
+  !                              KMIN_FACE, KMAX_FACE
+  !   use project_inputs, only : twod
+  !   use message,        only : error_message
+  !   !use mpi
+  !   !use set_inputs,     only : world_comm2, id2, ierr2
+
+  !   integer, dimension(:), intent(in)  :: bc_node_idx
+  !   integer,               intent(out) :: face_label
+  !   integer, dimension(3), intent(out) :: out_dir
+
+  !   logical :: err
+
+  !   character(*), parameter :: routine_name = 'bc_derived_type: find_face_label'
+
+  !   continue
+
+  !   if( bc_node_idx(1) == bc_node_idx(2) ) then
+
+  !     ! TODO check if interior
+  !     if ( bc_node_idx(1) == 1 ) then
+  !       face_label = IMIN_FACE
+  !       out_dir    = [ -1, 0, 0 ]
+  !     else
+  !       face_label = IMAX_FACE
+  !       out_dir    = [ 1, 0, 0 ]
+  !     end if
+
+  !   else if( bc_node_idx(3) == bc_node_idx(4) ) then
+
+  !     ! TODO check if interior
+  !     if ( bc_node_idx(3) == 1 ) then
+  !       face_label = JMIN_FACE
+  !       out_dir    = [ 0, -1, 0 ]
+  !     else
+  !       face_label = JMAX_FACE
+  !       out_dir    = [ 0, 1, 0 ]
+  !     end if
+
+  !   else if( .not. twod ) then
+
+  !     if( bc_node_idx(5) == bc_node_idx(6) ) then
+
+  !       ! TODO check if interior
+  !       if ( bc_node_idx(5) == 1 ) then
+  !         face_label = KMIN_FACE
+  !         out_dir    = [ 0, 0, -1 ]
+  !       else
+  !         face_label = KMAX_FACE
+  !         out_dir    = [ 0, 0, 1 ]
+  !       end if
+
+  !     else
+
+  !       err = error_message( routine_name, 'Not a valid BC index range: zeta!' )
+
+  !     end if
+
+  !   else
+
+  !     err = error_message( routine_name, 'Not a valid BC index range!' )
+
+  !   end if
+
+  ! end subroutine find_face_info
 
   pure subroutine get_neighbor_idx( dim, bnd1_min, bnd1_max, bnd2_min, bnd2_max, idx, out_idx )
     integer,                 intent(in)  :: dim
@@ -6055,6 +6205,7 @@ module face_info_type
     type(interpolant_w_3D_data_t)       :: interp
   contains
     private
+    procedure, public :: create  => create_face_info_t
     procedure, public :: destroy => destroy_face_info_t
   end type face_info_t
 
@@ -6071,10 +6222,10 @@ contains
     call this%interp%destroy()
   end subroutine destroy_face_info_t
 
-  pure function constructor( n_dim, block_id, face_label, cell_nodes ) result(this)
-    integer,                      intent(in) :: n_dim, block_id, face_label
-    real(dp), dimension(:,:,:,:), intent(in) :: cell_nodes
-    type(face_info_t)                      :: this
+  pure subroutine create_face_info_t( this, n_dim, block_id, face_label, cell_nodes )
+    class(face_info_t),           intent(inout) :: this
+    integer,                      intent(in)    :: n_dim, block_id, face_label
+    real(dp), dimension(:,:,:,:), intent(in)    :: cell_nodes
     real(dp), dimension(:,:,:), allocatable :: face_nodes
     integer, dimension(4) :: tmp
     integer, dimension(3) :: skip, stride
@@ -6082,10 +6233,41 @@ contains
     integer :: dir
     integer :: status
 
+    call this%destroy()
+
     tmp  = shape(cell_nodes)
     skip = tmp(2:4) - 1
     stride = 1
-    dir    = face_label
+    ! dir    = face_label
+    dir    = merge(-1,1,mod(face_label,2)==0) * face_label/2
+    call get_face_coords_from_cell( shp, skip, stride, dir, cell_nodes, status=status )
+    allocate( face_nodes(shp(1),shp(2),3) )
+    call this%interp%create( pack(face_nodes(:,:,1),.true.), &
+                             pack(face_nodes(:,:,2),.true.), &
+                             pack(face_nodes(:,:,3),.true.), shape(face_nodes(:,:,1)) )
+    deallocate( face_nodes )
+
+    this%block_id   = block_id
+    this%face_label = face_label
+    this%out_dir    = zero
+  end subroutine create_face_info_t
+
+  pure function constructor( n_dim, block_id, face_label, cell_nodes ) result(this)
+    integer,                      intent(in) :: n_dim, block_id, face_label
+    real(dp), dimension(:,:,:,:), intent(in) :: cell_nodes
+    type(face_info_t)                        :: this
+    real(dp), dimension(:,:,:), allocatable :: face_nodes
+    integer, dimension(4) :: tmp
+    integer, dimension(3) :: skip, stride
+    integer, dimension(2) :: shp
+    integer :: dir
+    integer :: status
+    call this%destroy()
+    tmp  = shape(cell_nodes)
+    skip = tmp(2:4) - 1
+    stride = 1
+    ! dir    = face_label
+    dir    = merge(-1,1,mod(face_label,2)==0) * face_label/2
     call get_face_coords_from_cell( shp, skip, stride, dir, cell_nodes, status=status )
     allocate( face_nodes(shp(1),shp(2),3) )
     call this%interp%create( pack(face_nodes(:,:,1),.true.), &
@@ -6152,7 +6334,102 @@ contains
   end subroutine get_face_coords_from_cell
 
 end module face_info_type
-#if FALSE
+
+module boundary_info_type
+  use set_precision, only : dp
+  use set_constants, only : zero
+  use index_conversion, only : get_face_id_from_node_list, get_face_idx_from_id, node_to_cell_idx
+  implicit none
+  private
+  public :: bc_t, bc_holder_t
+  ! collect all wall info here prior to wall distance search
+  type bc_t
+    ! Indicies of the interior cells that are along this boundary
+    integer, dimension(3) :: idx_min = -1
+    integer, dimension(3) :: idx_max = -1
+
+    ! Indicies of the interior nodes that are along this boundary
+    integer, dimension(3) :: node_idx_min = -1
+    integer, dimension(3) :: node_idx_max = -1
+
+    integer :: bound_id   = -1  ! boundary id
+    integer :: block_id   = -1  ! What parent block this is on
+    integer :: bc_label   = -1  ! What bc type this is
+    integer :: face_label = -1  ! What face this is on
+  contains
+    private
+    procedure, public :: create  => create_bc_t
+    procedure, public :: destroy => destroy_bc_t
+  end type bc_t
+
+  type bc_holder_t
+    integer :: n_bounds
+    type(bc_t), dimension(:), allocatable :: bc
+  contains
+    private
+    procedure, public :: create  => create_bc_holder_t
+    procedure, public :: destroy => destroy_bc_holder_t
+  end type bc_holder_t
+
+contains
+
+  pure elemental subroutine destroy_bc_holder_t( this )
+    class(bc_holder_t), intent(inout) :: this
+    if ( allocated(this%bc) ) then
+      call this%bc%destroy
+      deallocate( this%bc )
+    end if
+    this%n_bounds = 0
+  end subroutine destroy_bc_holder_t
+
+  pure elemental subroutine destroy_bc_t( this )
+    class(bc_t), intent(inout) :: this
+    this%idx_min      = -1
+    this%idx_min      = -1
+    this%node_idx_min = -1
+    this%node_idx_max = -1
+    this%bound_id     = -1
+    this%block_id     = -1
+    this%bc_label     = -1
+    this%face_label   = -1
+  end subroutine destroy_bc_t
+
+
+  pure subroutine create_bc_t( this, n_dim, block_id, bound_id, bc_label, node_list, node_bnd_min, node_bnd_max, n_skip )
+    class(bc_t),                         intent(inout) :: this
+    integer,                             intent(in)    :: n_dim, block_id, bound_id, bc_label
+    integer, dimension(:),               intent(in)    :: node_list
+    integer, dimension(:),     optional, intent(in)    :: node_bnd_min, node_bnd_max, n_skip
+    
+    integer, dimension(2,n_dim) :: nodes
+    call this%destroy()
+    this%block_id = block_id
+    this%bound_id = bound_id
+    this%bc_label = bc_label
+    call get_face_id_from_node_list( n_dim, node_list, this%face_label, min_bnd=node_bnd_min, max_bnd=node_bnd_max )
+    nodes = reshape( node_list, [2,n_dim] )
+    this%node_idx_min          = 1
+    this%node_idx_min(1:n_dim) = nodes(1,:)
+    this%node_idx_max          = 1
+    this%node_idx_max(1:n_dim) = nodes(2,:)
+    this%idx_min = this%node_idx_min
+    this%idx_max = this%node_idx_max
+    call node_to_cell_idx(this%idx_min,this%idx_max)
+    if ( present(n_skip) ) then
+      this%node_idx_max(1:n_dim) = ( this%node_idx_max(1:n_dim) - 1 )/n_skip(1:n_dim) + 1
+      where( this%idx_max(1:n_dim)>1) this%idx_max(1:n_dim) = ( this%idx_max(1:n_dim) )/n_skip(1:n_dim)
+    end if
+  end subroutine create_bc_t
+
+  pure subroutine create_bc_holder_t( this, n_bounds )
+    class(bc_holder_t), intent(inout) :: this
+    integer,            intent(in)    :: n_bounds
+    call this%destroy()
+    allocate( this%bc(n_bounds) )
+    this%n_bounds = n_bounds
+  end subroutine create_bc_holder_t
+
+end module boundary_info_type
 module wall_info_type
   use set_precision, only : dp
   use set_constants, only : zero
@@ -6161,16 +6438,9 @@ module wall_info_type
   private
   public :: wall_info_t
   ! collect all wall info here prior to wall distance search
-
-  type face_info_holder
-    type(face_info_t), allocatable :: f
-  contains
-    private
-    procedure, public :: destroy => destroy_face_info_holder
-  end type face_info_holder
   type wall_info_t
     integer :: n_dim, n_faces
-    type(face_info_holder), dimension(:), allocatable :: faces
+    type(face_info_t), dimension(:), allocatable :: faces
   contains
     private
     procedure, public :: create  => create_wall_info_t
@@ -6178,14 +6448,6 @@ module wall_info_type
   end type wall_info_t
 
 contains
-
-  pure elemental subroutine destroy_face_info_holder( this )
-    class(face_info_holder), intent(inout) :: this
-    if ( allocated( this%f ) ) then
-      call this%f%destroy()
-      deallocate( this%f )
-    end if
-  end subroutine destroy_face_info_holder
 
   pure elemental subroutine destroy_wall_info_t( this )
     class(wall_info_t), intent(inout) :: this
@@ -6209,7 +6471,7 @@ contains
 
   pure subroutine add_faces( this, block_id, fidx, face_label, lo, hi, skip, stride, node_coords, w_lo, w_hi )
     type(wall_info_t), intent(inout) :: this
-    integer,            intent(in)    :: block_id, fidx, face_label
+    integer,           intent(in)    :: block_id, fidx, face_label
     integer, dimension(3), intent(in) :: lo, hi, skip, stride
     real(dp), dimension(3,lo(1):hi(1),lo(2):hi(2),lo(3):hi(3)), intent(in) :: node_coords
     integer, dimension(3), intent(in) :: w_lo, w_hi
@@ -6228,8 +6490,7 @@ contains
       do j = w_lo(2),w_hi(2),stride(2)
         do i = w_lo(1),w_hi(1),stride(1)
           cnt = cnt + 1
-          ! this%faces(cnt)%f = face_info_t( this%n_dim, block_id, face_label, node_coords(:,l(1):h(1):s(1),l(2):h(2):s(2),l(3):h(3):s(3)) )
-          this%faces(cnt)%f = face_info_t( 3, block_id, face_label, node_coords )
+          call this%faces(cnt)%create( this%n_dim, block_id, face_label, node_coords(:,l(1):h(1):s(1),l(2):h(2):s(2),l(3):h(3):s(3)) )
         end do
       end do
     end do
@@ -6417,7 +6678,7 @@ contains
   ! end subroutine get_min_distance
 
 end module wall_info_type
-#endif
+! #endif
 
 module grid_derived_type
   use set_precision,           only : dp
@@ -7545,6 +7806,11 @@ contains
 
   end subroutine deallocate_derived_grid
 
+
+  ! pure subroutine add_faces_from_bc_to_wall_info_t( info, idx, bound, )
+  !   use wall_info_type, only : wall_info_t
+  ! end subroutine add_faces_from_bc
+
 end module grid_derived_type
 
 module grid_local
@@ -8353,33 +8619,69 @@ contains
     grid%total_int_volume = sum( grid%gblock%total_volume )
   end subroutine setup_grid_read
 
-  subroutine setup_grid_generate( n_dim, n_nodes, n_ghost, n_skip, grid, delta,        &
-                                  end_pts, x1_map, x2_map, x3_map )
+  subroutine setup_grid_generate( n_dim, n_nodes, n_ghost, n_skip, grid, name, delta, &
+                                    end_pts, x1_map, x2_map, x3_map )
     use grid_derived_type,    only : grid_type
-    use linspace_helper,      only : annulus_mesh, sphere_mesh, perturb_mesh, map_1D_fun
+    use linspace_helper,      only : cartesian_mesh, annulus_mesh, sphere_mesh, perturb_mesh, map_1D_fun
+    use message,              only : warning_message, WARN_ALWAYS
+    use project_inputs,       only : verbose_level
     integer, intent(in) :: n_dim
-    integer, dimension(3), intent(in) :: n_nodes, n_ghost, n_skip
-    type(grid_type),       intent(out) :: grid
-    real(dp), optional,    intent(in)  :: delta
+    integer, dimension(3),  intent(in)             :: n_nodes, n_ghost, n_skip
+    type(grid_type),        intent(out)            :: grid
+    character(*), optional, intent(in)             :: name
+    real(dp), optional,     intent(in)             :: delta
     real(dp), dimension(3,2), optional, intent(in) :: end_pts
-    procedure(map_1D_fun), optional    :: x1_map, x2_map, x3_map
+    procedure(map_1D_fun), optional                :: x1_map, x2_map, x3_map
+    logical :: err
 
     call grid%setup(n_dim,1)
-    call grid%gblock(1)%setup( 1, n_dim,n_nodes,n_ghost,n_skip=n_skip)
-    ! call grid%gblock(1)%set_nodes( sphere_mesh(    n_nodes(1),                 &
-    !                                                n_nodes(2),                 &
-    !                                                n_nodes(3),                 &
-    !                                                end_pts=end_pts,            &
-    !                                                r_fun=x1_map,               &
-    !                                                theta_fun=x2_map,           &
-    !                                                phi_fun=x3_map ) )
-    call grid%gblock(1)%set_nodes( annulus_mesh(   n_nodes(1),                 &
-                                                   n_nodes(2),                 &
-                                                   n_nodes(3),                 &
-                                                   end_pts=end_pts,            &
-                                                   r_fun=x1_map,               &
-                                                   theta_fun=x2_map,           &
-                                                   z_fun=x3_map ) )
+    call grid%gblock(1)%setup(1,n_dim,n_nodes,n_ghost,n_skip=n_skip)
+
+    if ( present(name) ) then
+      select case(name)
+      case('sphere')
+        call grid%gblock(1)%set_nodes( sphere_mesh(   n_nodes(1),                 &
+                                                      n_nodes(2),                 &
+                                                      n_nodes(3),                 &
+                                                      end_pts=end_pts,            &
+                                                      r_fun=x1_map,               &
+                                                      theta_fun=x2_map,           &
+                                                      phi_fun=x3_map ) )
+      case('annulus')
+        call grid%gblock(1)%set_nodes( annulus_mesh(  n_nodes(1),                 &
+                                                      n_nodes(2),                 &
+                                                      n_nodes(3),                 &
+                                                      end_pts=end_pts,            &
+                                                      r_fun=x1_map,               &
+                                                      theta_fun=x2_map,           &
+                                                      z_fun=x3_map ) )
+      case('cartesian')
+        call grid%gblock(1)%set_nodes( cartesian_mesh(n_nodes(1),                 &
+                                                      n_nodes(2),                 &
+                                                      n_nodes(3),                 &
+                                                      end_pts=end_pts,            &
+                                                      x_fun=x1_map,               &
+                                                      y_fun=x2_map,               &
+                                                      z_fun=x3_map ) )
+      case default
+        err = warning_message(WARN_ALWAYS,'setup_grid_generate','unrecognized grid name; using cartesian')
+        call grid%gblock(1)%set_nodes( cartesian_mesh(n_nodes(1),                 &
+                                                      n_nodes(2),                 &
+                                                      n_nodes(3),                 &
+                                                      end_pts=end_pts,            &
+                                                      x_fun=x1_map,               &
+                                                      y_fun=x2_map,               &
+                                                      z_fun=x3_map ) )
+      end select
+    else
+      call grid%gblock(1)%set_nodes( cartesian_mesh(n_nodes(1),                 &
+                                                    n_nodes(2),                 &
+                                                    n_nodes(3),                 &
+                                                    end_pts=end_pts,            &
+                                                    x_fun=x1_map,               &
+                                                    y_fun=x2_map,               &
+                                                    z_fun=x3_map ) )
+    end if
     if (present(delta) ) then
       call perturb_mesh( grid%gblock(1)%node_coords, delta )
     end if
@@ -8769,6 +9071,13 @@ contains
     end do
   end subroutine output_grid
 
+
+  ! call getarg(1, refine_str)
+
+  !   read(refine_str, *) refine_factor
+
+  !   print *, 'refine factor: ', refine_factor
+
 end module test_problem
 
 program main
@@ -8780,10 +9089,12 @@ program main
   use timer_derived_type, only : basic_timer_t
   use project_inputs, only : n_dim, n_nodes, n_ghost, n_skip
   use linspace_helper, only : sphere_mesh, annulus_mesh
+  use boundary_info_type, only : bc_t, bc_holder_t
 
   implicit none
 
-  type(grid_type) :: grid
+  type(bc_holder_t)   :: bounds
+  type(grid_type)     :: grid
   type(basic_timer_t) :: timer
   real(dp), dimension(:,:,:,:), allocatable :: volume_nodes
   real(dp), dimension(:,:,:),   allocatable :: face_nodes
@@ -8825,8 +9136,14 @@ program main
 
   ! call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
   ! setup_grid_read(file_name, n_dim, n_ghost, n_skip, grid)
-  call setup_grid('/mnt/c/Users/wajordan/Desktop/_kt0257x0065/kt.grd',n_dim,n_ghost,n_skip,grid)
+  ! call setup_grid('/mnt/c/Users/wajordan/Desktop/_kt0257x0065/kt.grd',n_dim,n_ghost,n_skip,grid)
+  call setup_grid('/mnt/c/Users/Will/Desktop/MY_CASES/_kt0513x0129/kt.grd',n_dim,n_ghost,n_skip,grid)
   n_nodes = grid%gblock(1)%n_nodes
+
+  ! call bounds%create(2)
+  ! call bounds%bc(1)%create(n_dim, 1, 1, 202, [49,81,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes)
+  ! call bounds%bc(1)%create(n_dim, 1, 1, 202, [129,385,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
+  ! call bounds%destroy()
 
   allocate( pts(3,n_t_pts) )
   ! allocate( pts(3,n_pts) )
