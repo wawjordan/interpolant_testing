@@ -6655,16 +6655,6 @@ contains
     end do
 
     min_dist = dist_buffer(1)
-
-          
-    ! change to cell indexing
-    lo    = 1
-    hi    = 1
-    hi(1:n_dim) = (gblock%n_nodes(1:n_dim)-1)/gblock%n_skip(1:n_dim)
-    idx   = 1
-    idx(1:n_dim) = (node_idx(1:n_dim) - 1)/gblock%n_skip(1:n_dim) + 1
-    call node_cell_nbors( 3, idx, lo, hi, cell_idxs, n_faces )
-    lo = 1
   end subroutine get_candidate_faces
 
 
