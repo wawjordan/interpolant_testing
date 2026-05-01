@@ -33,54 +33,105 @@ module set_constants
   integer,  parameter :: max_text_line_length = 1024
 end module set_constants
 
-module insert_sort
+module insert
+  use set_precision, only : dp
   implicit none
   private
+  public :: insertion_sort_idx
+
+  interface insertion_sort_idx
+    module procedure insertion_sort_idx_i4
+    module procedure insertion_sort_idx_i8
+    module procedure insertion_sort_idx_r4
+    module procedure insertion_sort_idx_r8
+  end interface insertion_sort_idx
 contains
-  pure subroutine insertion_sort(a)
-    integer, dimension(:), intent(inout) :: a
+
+  pure function insertion_sort_idx_i4(a) result(idx)
+    use set_precision, only : i4
+    integer(i4), dimension(:), intent(in) :: a
+    integer, dimension(size(a))       :: idx
     integer :: n, j, i, key
     logical :: flag
     n = size(a)
-    do j = 2,n
-      key = a(j)
-      flag = .false.
-      do i = j-1,1,-1
-        if (a(i)<=key) then
-          flag = .false.
-          exit
-        end if
-        a(i+1) = a(i)
-      end do
-      if (flag) i = 0
-      a(i+1) = key
-    end do
-  end subroutine insertion_sort
-
-
-
-  pure function insertion_sort_idx(a) result(idx)
-    integer, dimension(:), intent(in) :: a
-    integer, dimension(size(a)) :: idx
-    integer :: n, j, i, key
-    logical :: flag
-    n = size(a)
-    idx = [(i,i=1,n)]
+    idx = [(j,j=1,n)]
     do j = 2,n
       key = idx(j)
       flag = .false.
       do i = j-1,1,-1
-        if (a(idx(i))<=a(key)) then
-          flag = .false.
-          exit
-        end if
+        flag = a(idx(i))<=a(key)
+        if (flag) exit
         idx(i+1) = idx(i)
       end do
-      if (flag) i = 0
+      if (.not.flag) i = 0
       idx(i+1) = key
     end do
-  end function insertion_sort_idx
-end module insert_sort
+  end function insertion_sort_idx_i4
+
+  pure function insertion_sort_idx_i8(a) result(idx)
+    use set_precision, only : i8
+    integer(i8), dimension(:), intent(in) :: a
+    integer, dimension(size(a))       :: idx
+    integer :: n, j, i, key
+    logical :: flag
+    n = size(a)
+    idx = [(j,j=1,n)]
+    do j = 2,n
+      key = idx(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(idx(i))<=a(key)
+        if (flag) exit
+        idx(i+1) = idx(i)
+      end do
+      if (.not.flag) i = 0
+      idx(i+1) = key
+    end do
+  end function insertion_sort_idx_i8
+
+  pure function insertion_sort_idx_r4(a) result(idx)
+    use set_precision, only : r4
+    real(r4), dimension(:), intent(in) :: a
+    integer,  dimension(size(a))       :: idx
+    integer :: n, j, i, key
+    logical :: flag
+    n = size(a)
+    idx = [(j,j=1,n)]
+    do j = 2,n
+      key = idx(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(idx(i))<=a(key)
+        if (flag) exit
+        idx(i+1) = idx(i)
+      end do
+      if (.not.flag) i = 0
+      idx(i+1) = key
+    end do
+  end function insertion_sort_idx_r4
+
+  pure function insertion_sort_idx_r8(a) result(idx)
+    use set_precision, only : r8
+    real(r8), dimension(:), intent(in) :: a
+    integer,  dimension(size(a))       :: idx
+    integer :: n, j, i, key
+    logical :: flag
+    n = size(a)
+    idx = [(j,j=1,n)]
+    do j = 2,n
+      key = idx(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(idx(i))<=a(key)
+        if (flag) exit
+        idx(i+1) = idx(i)
+      end do
+      if (.not.flag) i = 0
+      idx(i+1) = key
+    end do
+  end function insertion_sort_idx_r8
+
+end module insert
 
 module project_inputs
   use set_constants, only : zero, one, max_text_line_length
@@ -6560,58 +6611,61 @@ contains
 
   end subroutine get_face_coords_from_cell
 
-  ! pure subroutine get_candidate_faces(this,xyz_point,max_faces,n_faces,faces,node_idxs,min_dist)
-  !   use set_constants,    only : large
-  !   use index_conversion, only : node_cell_nbors
-  !   use quick_sort
-  !   class(wall_info_t),               intent(in)  :: this
-  !   real(dp), dimension(3),           intent(in)  :: xyz_point
-  !   integer,                          intent(in)  :: max_faces
-  !   integer,                          intent(out) :: n_faces
-  !   integer,  dimension(max_faces),   intent(out) :: faces
-  !   integer,  dimension(4,max_faces), intent(out) :: node_idx
-  !   real(dp),                         intent(out) :: min_dist
-  !   real(dp), dimension(max_faces) :: dist_buffer
-  !   integer,  dimension(max_faces) :: sort_idx
-  !   integer, dimension(3) :: lo, hi, stride, offset, idx, tmp
-  !   integer :: n_dim
-  !   integer :: n, c1
-  !   real(dp) :: dist
+  pure subroutine get_candidate_faces(this,xyz_point,max_faces,n_faces,faces,node_idxs,min_dist)
+    use set_constants,    only : large
+    use index_conversion, only : node_cell_nbors
+    use insert,           only : insertion_sort_idx
+    class(wall_info_t),               intent(in)  :: this
+    real(dp), dimension(3),           intent(in)  :: xyz_point
+    integer,                          intent(in)  :: max_faces
+    integer,                          intent(out) :: n_faces
+    integer,  dimension(max_faces),   intent(out) :: faces
+    integer,  dimension(3,max_faces), intent(out) :: node_idxs
+    real(dp),                         intent(out) :: min_dist
+    real(dp), dimension(max_faces) :: dist_buffer
+    integer,  dimension(max_faces) :: sort_idx
+    integer, dimension(3) :: lo, hi, stride, offset, idx, tmp
+    integer :: n_dim
+    integer :: n, c1
+    real(dp) :: dist
 
-  !   dist_buffer = large
-  !   sort_idx = [(n,n=1,max_faces)]
-  !   c1 = 0
-  !   do n = 1,this%n_faces
-  !     idx = minloc( (this%faces(n)%interp%X1 - xyz_point(1))**2 &
-  !                 + (this%faces(n)%interp%X2 - xyz_point(2))**2 &
-  !                 + (this%faces(n)%interp%X3 - xyz_point(3))**2 )
-  !     dist = norm2( [this%faces(n)%interp%X1(idx(1),idx(2),idx(3)), &
-  !                    this%faces(n)%interp%X2(idx(1),idx(2),idx(3)), &
-  !                    this%faces(n)%interp%X3(idx(1),idx(2),idx(3))] &
-  !                    - xyz_point )
-  !     if (c1<max_faces) then
-  !       ! add to the buffer
-  !       c1 = c1 + 1
-  !       dist_buffer(c1) = dist
+    dist_buffer = large
+    ! sort_idx = [(n,n=1,max_faces)]
+    n_faces = 0
+    do n = 1,this%n_faces
+      idx = minloc( (this%faces(n)%interp%X1 - xyz_point(1))**2 &
+                  + (this%faces(n)%interp%X2 - xyz_point(2))**2 &
+                  + (this%faces(n)%interp%X3 - xyz_point(3))**2 )
+      dist = norm2( [this%faces(n)%interp%X1(idx(1),idx(2),idx(3)), &
+                     this%faces(n)%interp%X2(idx(1),idx(2),idx(3)), &
+                     this%faces(n)%interp%X3(idx(1),idx(2),idx(3))] &
+                     - xyz_point )
+      if (n_faces<max_faces) then
+        ! add to the buffer
+        n_faces = n_faces + 1
+        dist_buffer(n_faces) = dist
+        faces(n_faces)       = n
+        node_idxs(:,n_faces) = idx
+        if ( n_faces > 1 ) then ! sort
+          sort_idx(1:n_faces) = insertion_sort_idx(dist_buffer(1:n_faces))
+        end if
+      else
+        exit
+      end if
+    end do
 
-  !       if ( c1 > 1 ) then ! sort
+    min_dist = dist_buffer(1)
+
           
-  !     else
-        
-  !       min_dist = dist
-  !       faces(1) = n
-  !     end if
-  !   end do
-          
-  !   ! change to cell indexing
-  !   lo    = 1
-  !   hi    = 1
-  !   hi(1:n_dim) = (gblock%n_nodes(1:n_dim)-1)/gblock%n_skip(1:n_dim)
-  !   idx   = 1
-  !   idx(1:n_dim) = (node_idx(1:n_dim) - 1)/gblock%n_skip(1:n_dim) + 1
-  !   call node_cell_nbors( 3, idx, lo, hi, cell_idxs, n_faces )
-  !   lo = 1
-  ! end subroutine get_candidate_faces
+    ! change to cell indexing
+    lo    = 1
+    hi    = 1
+    hi(1:n_dim) = (gblock%n_nodes(1:n_dim)-1)/gblock%n_skip(1:n_dim)
+    idx   = 1
+    idx(1:n_dim) = (node_idx(1:n_dim) - 1)/gblock%n_skip(1:n_dim) + 1
+    call node_cell_nbors( 3, idx, lo, hi, cell_idxs, n_faces )
+    lo = 1
+  end subroutine get_candidate_faces
 
 
   ! pure subroutine get_min_distance(gblock,bnd_num,xyz_point,min_dist,clip,max_iter,xyz_eval,out_idx)
