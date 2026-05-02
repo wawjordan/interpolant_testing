@@ -1164,7 +1164,7 @@ contains
     ! reorder if necessary
     dir  = ( (n_hi-n_lo)>=0 )
     do i = 1,n_dim
-      if ( dir(i) ) then
+      if ( .not.dir(i) ) then
         swap    = n_lo(i)
         n_lo(i) = n_hi(i)
         n_hi(i) = swap
@@ -1183,10 +1183,10 @@ contains
     do i = 1,n_dim
       if ( .not. varies(i) ) then
         if ( lo(i) .and. .not.(hi(i)) ) then
-          face_id = 2*(i-1)
+          face_id = 2*(i-1) + 1
           return
         elseif ( hi(i) .and. .not.(lo(i)) ) then
-          face_id = 2*(i-1) + 1
+          face_id = 2*i
           return
         else ! interior (?)
           if ( present(status) ) status = 1
@@ -6492,6 +6492,8 @@ contains
     integer, dimension(:),     optional, intent(in)    :: node_bnd_min, node_bnd_max, n_skip
     
     integer, dimension(2,n_dim) :: nodes
+    integer :: n, swp
+
     call this%destroy()
     this%block_id = block_id
     this%bound_id = bound_id
@@ -6504,9 +6506,18 @@ contains
     this%node_idx_max(1:n_dim) = nodes(2,:)
     this%idx_min = this%node_idx_min
     this%idx_max = this%node_idx_max
+    do n = 1,n_dim
+      if (this%idx_min(n) > this%idx_max(n) ) then
+        swp = this%idx_max(n)
+        this%idx_max(n) = this%idx_min(n)
+        this%idx_min(n) = swp
+      end if
+    end do
     call node_to_cell_idx(this%idx_min,this%idx_max)
     if ( present(n_skip) ) then
+      this%node_idx_min(1:n_dim) = ( this%node_idx_min(1:n_dim) - 1 )/n_skip(1:n_dim) + 1
       this%node_idx_max(1:n_dim) = ( this%node_idx_max(1:n_dim) - 1 )/n_skip(1:n_dim) + 1
+      where( this%idx_min(1:n_dim)>1) this%idx_min(1:n_dim) = ( this%idx_min(1:n_dim) )/n_skip(1:n_dim)
       where( this%idx_max(1:n_dim)>1) this%idx_max(1:n_dim) = ( this%idx_max(1:n_dim) )/n_skip(1:n_dim)
     end if
   end subroutine create_bc_t
@@ -6533,6 +6544,7 @@ module wall_info_type
     type(face_info_t), dimension(:), allocatable :: faces
   contains
     private
+    procedure, public :: get_candidate_faces, get_min_distance
     procedure, public :: create  => create_wall_info_t
     procedure, public :: destroy => destroy_wall_info_t
   end type wall_info_t
@@ -6622,16 +6634,16 @@ contains
     integer,  dimension(max_faces),   intent(out) :: faces
     integer,  dimension(3,max_faces), intent(out) :: node_idxs
     real(dp),                         intent(out) :: min_dist
-    real(dp), dimension(max_faces) :: dist_buffer
-    integer,  dimension(max_faces) :: sort_idx
-    integer, dimension(3) :: lo, hi, stride, offset, idx, tmp
-    integer :: n_dim
-    integer :: n, c1
+    real(dp), dimension(max_faces)   :: dist_buffer
+    integer,  dimension(max_faces)   :: sort_idx
+    integer,  dimension(3,max_faces) :: idx_buffer
+    integer, dimension(3) :: idx
+    integer :: n
     real(dp) :: dist
 
     dist_buffer = large
-    ! sort_idx = [(n,n=1,max_faces)]
-    n_faces = 0
+    sort_idx = 0
+    n_faces  = 0
     do n = 1,this%n_faces
       idx = minloc( (this%faces(n)%interp%X1 - xyz_point(1))**2 &
                   + (this%faces(n)%interp%X2 - xyz_point(2))**2 &
@@ -6643,76 +6655,66 @@ contains
       if (n_faces<max_faces) then
         ! add to the buffer
         n_faces = n_faces + 1
-        dist_buffer(n_faces) = dist
-        faces(n_faces)       = n
-        node_idxs(:,n_faces) = idx
-        if ( n_faces > 1 ) then ! sort
-          sort_idx(1:n_faces) = insertion_sort_idx(dist_buffer(1:n_faces))
-        end if
+        dist_buffer(n_faces)  = dist
+        faces(n_faces)        = n
+        idx_buffer(:,n_faces) = idx
+        sort_idx(1:n_faces)   = insertion_sort_idx(dist_buffer(1:n_faces))
       else
         exit
       end if
     end do
 
-    min_dist = dist_buffer(1)
+    node_idxs(:,1:n_faces) = idx_buffer(:,sort_idx(1:n_faces))
+    min_dist = dist_buffer(sort_idx(1))
   end subroutine get_candidate_faces
 
+  pure subroutine get_min_distance(this,xyz_point,min_dist,clip,max_faces,max_iter,xyz_eval,out_face,out_idx)
+    use set_constants,            only : zero
+    class(wall_info_t),               intent(in)  :: this
+    real(dp), dimension(3),           intent(in)  :: xyz_point
+    real(dp),                         intent(out) :: min_dist
+    logical,                optional, intent(in)  :: clip
+    integer,                optional, intent(in)  :: max_iter
+    integer,                optional, intent(in)  :: max_faces
+    real(dp), dimension(3), optional, intent(out) :: xyz_eval
+    integer,                optional, intent(out) :: out_face
+    integer,  dimension(3), optional, intent(out) :: out_idx
+    integer,  dimension(:), allocatable   :: faces
+    integer,  dimension(:,:), allocatable :: node_idxs
+    integer :: n_faces, max_faces_
+    real(dp), dimension(3) :: xyz_out
+    real(dp), dimension(2) :: uv
+    real(dp) :: dist
+    integer :: i, status, face_num
 
-  ! pure subroutine get_min_distance(gblock,bnd_num,xyz_point,min_dist,clip,max_iter,xyz_eval,out_idx)
-  !   use set_constants,            only : zero, one
-  !   use interpolant_derived_type, only : interpolant_w_3D_data_t
-  !   class(grid_block),        intent(in)  :: gblock
-  !   integer,                  intent(in)  :: bnd_num
-  !   real(dp), dimension(3),   intent(in)  :: xyz_point
-  !   real(dp),                 intent(out) :: min_dist
-  !   logical,                optional, intent(in)   :: clip
-  !   integer,                optional, intent(in)   :: max_iter
-  !   real(dp), dimension(3), optional, intent(out)  :: xyz_eval
-  !   integer,  dimension(3), optional, intent(out)  :: out_idx
-    
+    max_faces_ = 4
+    if ( present(max_faces) ) max_faces_ = max_faces
 
-  !   integer                  :: n_faces
-  !   integer,  dimension(3)   :: node_idx
-  !   integer,  dimension(3,8) :: cell_idxs
-  !   integer, dimension(2) :: shp
-  !   real(dp), dimension(:,:,:), allocatable :: face_nodes
-  !   real(dp), dimension(3) :: xyz_out
-  !   real(dp), dimension(2) :: uv
-  !   real(dp) :: dist, dist_est, dist_tmp
-  !   integer :: i, dir, status, face_num
-  !   type(interpolant_w_3D_data_t) :: interp
-  !   real(dp), dimension(3) :: xyz00, xyz10, xyz01, xyz11
-  !   real(dp), parameter :: h = 0.5_dp
+    allocate( faces(max_faces_) )
+    allocate( node_idxs(3,max_faces_) )
+    call this%get_candidate_faces(xyz_point,max_faces_,n_faces,faces,node_idxs,min_dist)
 
-  !   call gblock%get_candidate_faces(bnd_num,xyz_point,node_idx,n_faces,cell_idxs,min_dist)
-  !   if (present(xyz_eval)) xyz_out = gblock%node_coords(:,node_idx(1),node_idx(2),node_idx(3))
-  !   dir = bnd_num
-  !   face_num = 1
-  !   do i = 1,n_faces
-  !     call gblock%get_fg_face_nodes(cell_idxs(:,i),shp,dir)
-  !     allocate( face_nodes(shp(1),shp(2),3) )
-  !     call gblock%get_fg_face_nodes(cell_idxs(:,i),shp,dir,face_nodes=face_nodes)
-  !     call interp%create( pack(face_nodes(:,:,1),.true.), &
-  !                         pack(face_nodes(:,:,2),.true.), &
-  !                         pack(face_nodes(:,:,3),.true.), shape(face_nodes(:,:,1)) )
-  !     uv = zero
-  !     call interp%min_distance(xyz_point,uv,dist,xyz_eval=xyz_eval,max_iter=max_iter,clip=clip,status=status)
-  !     call interp%destroy()
-  !     deallocate( face_nodes )
-  !     ! out of bounds in parametric space
-  !     ! if (any(abs(uv) > one) ) continue
-  !     if ( dist < min_dist ) then
-  !       min_dist = dist
-  !       face_num = i
-  !       if (present(xyz_eval)) xyz_out = xyz_eval
-  !     end if
-  !   end do
-  !   if (present(xyz_eval)) xyz_eval = xyz_out
-  !   if (present(out_idx))  out_idx  = cell_idxs(:,face_num)
-  ! end subroutine get_min_distance
+    associate( f => faces, n => node_idxs )
+      if (present(out_face)) out_face = f(1)
+      if (present(out_idx))  out_idx  = n(:,1)
+      if (present(xyz_eval)) xyz_out  = [ this%faces(f(1))%interp%X1(n(1,1),n(2,1),n(3,1)), &
+                                          this%faces(f(1))%interp%X2(n(1,1),n(2,1),n(3,1)), &
+                                          this%faces(f(1))%interp%X3(n(1,1),n(2,1),n(3,1)) ]
+      do i = 1,n_faces
+        uv = zero
+        call this%faces(f(i))%interp%min_distance(xyz_point,uv,dist,xyz_eval=xyz_out,max_iter=max_iter,clip=clip,status=status)
+        if ( dist < min_dist ) then
+          min_dist = dist
+          face_num = i
+          if (present(xyz_eval)) xyz_eval = xyz_out
+          if (present(out_face)) out_face = f(i)
+          if (present(out_idx))  out_idx  = n(:,i)
+        end if
+      end do
+    end associate
+  end subroutine get_min_distance
 
 end module wall_info_type
-! #endif
 
 module grid_derived_type
   use set_precision,           only : dp
@@ -7879,7 +7881,7 @@ contains
               do i = lo(1),hi(1)
                 face_label = bounds(b)%bc(n)%face_label
                 block_id   = bounds(b)%bc(n)%block_id
-                dir = merge(-1,1,mod(face_label,2)==0) * face_label/2
+                dir = merge(1,-1,mod(face_label,2)==0) * face_label/2
                 call grid%gblock(block_id)%get_fg_face_nodes([i,j,k],shp,dir)
                 allocate( face_nodes(shp(1),shp(2),3) )
                 call grid%gblock(block_id)%get_fg_face_nodes([i,j,k],shp,dir,face_nodes=face_nodes)
@@ -9184,11 +9186,11 @@ program main
   real(dp), dimension(:,:),     allocatable :: out_vec
   real(dp), dimension(:,:),     allocatable :: pts
   real(dp), dimension(3) :: pt, xyz_eval, xyz_tmp
-  integer, dimension(3) :: cell_idx
+  integer, dimension(3) :: cell_idx, out_idx
   integer, dimension(2) :: shp
   integer, dimension(:), allocatable :: bnd_nums
   real(dp) :: dist, min_dist, ex, err
-  integer :: n_iter, n_pts, n_t_pts, n_bnds
+  integer :: n_iter, n_pts, n_t_pts, n_bnds, out_face
   integer :: i, j, cnt
   logical :: old
   character(100) :: zone_name
@@ -9204,7 +9206,8 @@ program main
   n_dim   = 2
   n_nodes = [9,17,1]
   n_ghost = [0,0,0]
-  n_skip  = [2,2,0]
+  ! n_skip  = [2,2,0]
+  n_skip  = [1,1,0]
 
   n_iter   = 100
   n_pts = 100
@@ -9222,14 +9225,14 @@ program main
 
   ! call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
   ! setup_grid_read(file_name, n_dim, n_ghost, n_skip, grid)
-  ! call setup_grid('/mnt/c/Users/wajordan/Desktop/_kt0257x0065/kt.grd',n_dim,n_ghost,n_skip,grid)
-  call setup_grid('/mnt/c/Users/Will/Desktop/MY_CASES/_kt0513x0129/kt.grd',n_dim,n_ghost,n_skip,grid)
+  call setup_grid('/mnt/c/Users/wajordan/Desktop/_kt0257x0065/kt.grd',n_dim,n_ghost,n_skip,grid)
+  ! call setup_grid('/mnt/c/Users/Will/Desktop/MY_CASES/_kt0513x0129/kt.grd',n_dim,n_ghost,n_skip,grid)
   n_nodes = grid%gblock(1)%n_nodes
 
   allocate( bounds(1) )
   call bounds%create(1)
-  call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [129,385,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
-  ! call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [49,81,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
+  ! call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [129,385,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
+  call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [49,81,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
   ! do j = 1,size(bounds)
   !   do i = 1,bounds(j)%n_bounds
   !     call bounds(j)%bc(i)%create()
@@ -9237,9 +9240,6 @@ program main
   ! end do
 
   call grid%make_wall_info(bounds,wall_info)
-
-  call wall_info%destroy()
-  call bounds%destroy()
 
   allocate( pts(3,n_t_pts) )
   ! allocate( pts(3,n_pts) )
@@ -9261,14 +9261,14 @@ program main
     ! pt = [2.3749641296722843_dp,1.8223740721795063_dp,-0.19620938769042878_dp]
     xyz_eval = zero
     min_dist = large
-    do i = 1,n_bnds
-      call grid%gblock(1)%get_min_distance(bnd_nums(i),pt,dist,max_iter=n_iter,xyz_eval=xyz_tmp,clip=.true.,out_idx=cell_idx)
-      if ( dist < min_dist ) then
-        min_dist = dist
-        xyz_eval = xyz_tmp
-      end if
-    end do
-        
+    ! do i = 1,n_bnds
+    !   call grid%gblock(1)%get_min_distance(bnd_nums(i),pt,dist,max_iter=n_iter,xyz_eval=xyz_tmp,clip=.true.,out_idx=cell_idx)
+    !   if ( dist < min_dist ) then
+    !     min_dist = dist
+    !     xyz_eval = xyz_tmp
+    !   end if
+    ! end do
+    call wall_info%get_min_distance( pt, min_dist,clip=.true.,max_iter=n_iter, xyz_eval=xyz_eval,out_face=out_face,out_idx=out_idx )
     ex = abs(norm2(pt)-one)
     err = ex - min_dist
     write(*,'(A,3(ES16.7),A,ES16.7,A,ES16.7)') 'pt = ',pt,' Min. distance = ', min_dist, ' Error: ', err
@@ -9288,67 +9288,7 @@ program main
   deallocate( out_vec )
   deallocate( pts )
   deallocate( bnd_nums )
-  ! cell_idx = [1,1,4]
-  ! allocate( volume_nodes( grid%gblock(1)%n_skip(1)+1, &
-  !                         grid%gblock(1)%n_skip(2)+1, &
-  !                         grid%gblock(1)%n_skip(3)+1, &
-  !                         3 ) )
-  
-  ! call grid%gblock(1)%get_fg_volume_nodes(cell_idx,volume_nodes)
-
-
-  ! call output_volume_subzone(n_dim,volume_nodes,'TEST_GRID',old)
-
-  ! deallocate( volume_nodes )
-
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
-  ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
-  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
-  ! deallocate( face_nodes )
-
-  ! pt = [three*cos(pi/32.0_dp),three*sin(pi/32.0_dp),one]
-  ! allocate(out_vec(3,n_iter+3))
-  ! out_vec = grid%gblock(1)%get_wall_distance_vec(cell_idx,bnd_num,pt,n_iter)
-  ! call output_line_subzone(n_dim,out_vec,'TEST_GRID',old)
-  ! deallocate( out_vec )
-
-  ! bnd_num = 1
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
-  ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
-  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
-  ! deallocate( face_nodes )
-
-  ! bnd_num = -2
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
-  ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
-  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
-  ! deallocate( face_nodes )
-
-  ! bnd_num = 2
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
-  ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
-  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
-  ! deallocate( face_nodes )
-
-  ! bnd_num = -3
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
-  ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
-  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
-  ! deallocate( face_nodes )
-
-  ! bnd_num = 3
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num)
-  ! allocate( face_nodes(shp(1),shp(2),3) )
-  ! call grid%gblock(1)%get_fg_face_nodes(cell_idx,shp,bnd_num,face_nodes=face_nodes)
-  ! call output_face_subzone(n_dim,face_nodes,'TEST_GRID',old)
-  ! deallocate( face_nodes )
-
-  
-
+  call bounds%destroy()
+  call wall_info%destroy()
   call grid%destroy()
 end program main
