@@ -787,6 +787,55 @@ contains
   end subroutine partition_1D
 end module quick_sort
 
+module swap_elements
+  implicit none
+  private
+  public :: swap
+  interface swap
+    module procedure swap_i4
+    module procedure swap_i8
+    module procedure swap_r4
+    module procedure swap_r8
+  end interface swap
+contains
+  pure elemental subroutine swap_i4(a,b)
+    use set_precision, only : i4
+    integer(i4), intent(inout) :: a, b
+    integer(i4) :: tmp
+    tmp = a
+    a   = b
+    b   = tmp
+  end subroutine swap_i4
+
+  pure elemental subroutine swap_i8(a,b)
+    use set_precision, only : i8
+    integer(i8), intent(inout) :: a, b
+    integer(i8) :: tmp
+    tmp = a
+    a   = b
+    b   = tmp
+  end subroutine swap_i8
+
+  pure elemental subroutine swap_r4(a,b)
+    use set_precision, only : r4
+    real(r4), intent(inout) :: a, b
+    real(r4) :: tmp
+    tmp = a
+    a   = b
+    b   = tmp
+  end subroutine swap_r4
+
+  pure elemental subroutine swap_r8(a,b)
+    use set_precision, only : r8
+    real(r8), intent(inout) :: a, b
+    real(r8) :: tmp
+    tmp = a
+    a   = b
+    b   = tmp
+  end subroutine swap_r8
+
+end module swap_elements
+
 module index_conversion
   implicit none
   private
@@ -796,7 +845,7 @@ module index_conversion
   public :: global2local_face, local2global_face
   public :: cell_face_nbors, node_cell_nbors
   public :: get_face_id_from_node_list
-  public :: get_face_idx_from_id
+  public :: get_face_idx_from_id, get_face_info_from_id
   public :: get_reshape_indices, get_dim_order
   public :: range_intersect, bound_intersect
   public :: node_to_cell_idx, get_neighbor_idx
@@ -1362,12 +1411,18 @@ contains
                                             bnd2_min, bnd2_max ) )
   end function bound_intersect
 
-  pure elemental subroutine node_to_cell_idx(bnd_min,bnd_max)
+  pure elemental subroutine node_to_cell_idx(bnd_min,bnd_max,order)
+    use swap_elements, only : swap
     integer, intent(inout) :: bnd_min, bnd_max
+    logical, optional, intent(in) :: order
+    logical :: order_
+    order_ = .false.
+    if ( present(order) ) order_ = order
     if ( bnd_max > bnd_min ) then
       bnd_max = bnd_max - 1
     elseif (bnd_min > bnd_max ) then
       bnd_min = bnd_min - 1
+      if ( order_ ) call swap(bnd_min,bnd_max)
     end if
   end subroutine node_to_cell_idx
 
@@ -5690,6 +5745,7 @@ module quadrature_derived_type
     integer :: n_quad = 0
     real(dp), allocatable, dimension(:,:) :: quad_pts
     real(dp), allocatable, dimension(:)   :: quad_wts
+    real(dp), allocatable, dimension(:)   :: wall_distance
   contains
     private
     procedure, public, pass :: create  => allocate_quad
@@ -5841,7 +5897,7 @@ contains
   end subroutine destroy_quad_ptr
 
   pure elemental subroutine allocate_quad( this, n_quad )
-    use set_constants, only : zero
+    use set_constants, only : zero, large
     class(quad_t), intent(inout) :: this
     integer,       intent(in)    :: n_quad
     this%n_quad = n_quad
@@ -5849,13 +5905,16 @@ contains
     this%quad_pts = zero
     allocate( this%quad_wts(n_quad) )
     this%quad_wts = zero
+    allocate( this%wall_distance(n_quad) )
+    this%quad_wts = large
   end subroutine allocate_quad
 
   pure elemental subroutine deallocate_quad( this )
     class(quad_t), intent(inout) :: this
     this%n_quad = 0
-    if( allocated( this%quad_wts  ) ) deallocate( this%quad_wts  )
-    if( allocated( this%quad_pts  ) ) deallocate( this%quad_pts  )
+    if( allocated( this%quad_wts      ) ) deallocate( this%quad_wts      )
+    if( allocated( this%quad_pts      ) ) deallocate( this%quad_pts      )
+    if( allocated( this%wall_distance ) ) deallocate( this%wall_distance )
   end subroutine deallocate_quad
 
   pure function integrate_scalar( this, f ) result( integral )
@@ -6343,6 +6402,7 @@ contains
   end subroutine create_face_info_t
 
   pure function constructor( n_dim, block_id, face_label, cell_nodes ) result(this)
+    use index_conversion, only : get_face_info_from_id
     integer,                      intent(in) :: n_dim, block_id, face_label
     real(dp), dimension(:,:,:,:), intent(in) :: cell_nodes
     type(face_info_t)                        :: this
@@ -6350,14 +6410,14 @@ contains
     integer, dimension(4) :: tmp
     integer, dimension(3) :: skip, stride
     integer, dimension(2) :: shp
-    integer :: dir
+    integer :: dir, off
     integer :: status
     call this%destroy()
     tmp  = shape(cell_nodes)
     skip = tmp(2:4) - 1
     stride = 1
-    ! dir    = face_label
-    dir    = merge(-1,1,mod(face_label,2)==0) * face_label/2
+    call get_face_info_from_id(face_label,dir,off)
+    dir = dir * (2*off-1)
     call get_face_coords_from_cell( shp, skip, stride, dir, cell_nodes, status=status )
     allocate( face_nodes(shp(1),shp(2),3) )
     call this%interp%create( pack(face_nodes(:,:,1),.true.), &
@@ -6504,22 +6564,21 @@ contains
     this%node_idx_min(1:n_dim) = nodes(1,:)
     this%node_idx_max          = 1
     this%node_idx_max(1:n_dim) = nodes(2,:)
-    this%idx_min = this%node_idx_min
-    this%idx_max = this%node_idx_max
-    do n = 1,n_dim
-      if (this%idx_min(n) > this%idx_max(n) ) then
-        swp = this%idx_max(n)
-        this%idx_max(n) = this%idx_min(n)
-        this%idx_min(n) = swp
-      end if
-    end do
-    call node_to_cell_idx(this%idx_min,this%idx_max)
     if ( present(n_skip) ) then
       this%node_idx_min(1:n_dim) = ( this%node_idx_min(1:n_dim) - 1 )/n_skip(1:n_dim) + 1
       this%node_idx_max(1:n_dim) = ( this%node_idx_max(1:n_dim) - 1 )/n_skip(1:n_dim) + 1
-      where( this%idx_min(1:n_dim)>1) this%idx_min(1:n_dim) = ( this%idx_min(1:n_dim) )/n_skip(1:n_dim)
-      where( this%idx_max(1:n_dim)>1) this%idx_max(1:n_dim) = ( this%idx_max(1:n_dim) )/n_skip(1:n_dim)
     end if
+    this%idx_min = this%node_idx_min
+    this%idx_max = this%node_idx_max
+    ! do n = 1,n_dim
+    !   if (this%idx_min(n) > this%idx_max(n) ) then
+    !     swp = this%idx_max(n)
+    !     this%idx_max(n) = this%idx_min(n)
+    !     this%idx_min(n) = swp
+    !   end if
+    ! end do
+    call node_to_cell_idx(this%idx_min,this%idx_max)
+    swp = 1
   end subroutine create_bc_t
 
   pure elemental subroutine create_bc_holder_t( this, n_bounds )
@@ -6635,15 +6694,18 @@ contains
     integer,  dimension(3,max_faces), intent(out) :: node_idxs
     real(dp),                         intent(out) :: min_dist
     real(dp), dimension(max_faces)   :: dist_buffer
-    integer,  dimension(max_faces)   :: sort_idx
+    integer,  dimension(max_faces)   :: sort_idx, face_buffer
     integer,  dimension(3,max_faces) :: idx_buffer
     integer, dimension(3) :: idx
-    integer :: n
-    real(dp) :: dist
+    integer :: n, i
+    real(dp) :: dist, swp
 
     dist_buffer = large
-    sort_idx = 0
-    n_faces  = 0
+    sort_idx  = 0
+    n_faces   = 0
+    faces     = 0
+    node_idxs = 0
+    min_dist  = large
     do n = 1,this%n_faces
       idx = minloc( (this%faces(n)%interp%X1 - xyz_point(1))**2 &
                   + (this%faces(n)%interp%X2 - xyz_point(2))**2 &
@@ -6656,23 +6718,43 @@ contains
         ! add to the buffer
         n_faces = n_faces + 1
         dist_buffer(n_faces)  = dist
-        faces(n_faces)        = n
+        face_buffer(n_faces)  = n
         idx_buffer(:,n_faces) = idx
         sort_idx(1:n_faces)   = insertion_sort_idx(dist_buffer(1:n_faces))
       else
-        exit
+        if ( dist < dist_buffer(sort_idx(max_faces)) ) then
+          if ( dist < dist_buffer(sort_idx(1)) ) then ! replace smallest
+              dist_buffer(sort_idx(1))  = dist
+              face_buffer(sort_idx(1))  = n
+              idx_buffer(:,sort_idx(1)) = idx
+          else
+            ! iterate down, and find which element to replace
+            do i = max_faces-1,1,-1
+              if ( dist >= dist_buffer(sort_idx(i)) ) then
+                dist_buffer(sort_idx(i+1))  = dist
+                face_buffer(sort_idx(i+1))  = n
+                idx_buffer(:,sort_idx(i+1)) = idx
+                exit
+              end if
+            end do
+          end if
+        end if
       end if
+      i = n
     end do
 
     node_idxs(:,1:n_faces) = idx_buffer(:,sort_idx(1:n_faces))
+    faces(1:n_faces)       = face_buffer(sort_idx(1:n_faces))
     min_dist = dist_buffer(sort_idx(1))
+
   end subroutine get_candidate_faces
 
-  pure subroutine get_min_distance(this,xyz_point,min_dist,clip,max_faces,max_iter,xyz_eval,out_face,out_idx)
+  pure subroutine get_min_distance(this,xyz_point,min_dist,solve,clip,max_faces,max_iter,xyz_eval,out_face,out_idx)
     use set_constants,            only : zero
     class(wall_info_t),               intent(in)  :: this
     real(dp), dimension(3),           intent(in)  :: xyz_point
     real(dp),                         intent(out) :: min_dist
+    logical,                optional, intent(in)  :: solve
     logical,                optional, intent(in)  :: clip
     integer,                optional, intent(in)  :: max_iter
     integer,                optional, intent(in)  :: max_faces
@@ -6694,24 +6776,28 @@ contains
     allocate( node_idxs(3,max_faces_) )
     call this%get_candidate_faces(xyz_point,max_faces_,n_faces,faces,node_idxs,min_dist)
 
-    associate( f => faces, n => node_idxs )
-      if (present(out_face)) out_face = f(1)
-      if (present(out_idx))  out_idx  = n(:,1)
-      if (present(xyz_eval)) xyz_out  = [ this%faces(f(1))%interp%X1(n(1,1),n(2,1),n(3,1)), &
-                                          this%faces(f(1))%interp%X2(n(1,1),n(2,1),n(3,1)), &
-                                          this%faces(f(1))%interp%X3(n(1,1),n(2,1),n(3,1)) ]
-      do i = 1,n_faces
-        uv = zero
-        call this%faces(f(i))%interp%min_distance(xyz_point,uv,dist,xyz_eval=xyz_out,max_iter=max_iter,clip=clip,status=status)
-        if ( dist < min_dist ) then
-          min_dist = dist
-          face_num = i
-          if (present(xyz_eval)) xyz_eval = xyz_out
-          if (present(out_face)) out_face = f(i)
-          if (present(out_idx))  out_idx  = n(:,i)
-        end if
-      end do
-    end associate
+    if (present(out_face)) out_face = faces(1)
+    if (present(out_idx))  out_idx  = node_idxs(:,1)
+    if (present(xyz_eval)) xyz_out  = [ this%faces(faces(1))%interp%X1(node_idxs(1,1),node_idxs(2,1),node_idxs(3,1)), &
+                                        this%faces(faces(1))%interp%X2(node_idxs(1,1),node_idxs(2,1),node_idxs(3,1)), &
+                                        this%faces(faces(1))%interp%X3(node_idxs(1,1),node_idxs(2,1),node_idxs(3,1)) ]
+    if ( present(solve) ) then
+      if ( solve ) then
+        do i = 1,n_faces
+          uv = zero
+          call this%faces(faces(i))%interp%min_distance(xyz_point,uv,dist,xyz_eval=xyz_eval,max_iter=max_iter,clip=clip,status=status)
+          if ( dist < min_dist ) then
+            min_dist = dist
+            face_num = i
+            if (present(xyz_eval)) xyz_out = xyz_eval
+            if (present(out_face)) out_face = faces(i)
+            if (present(out_idx))  out_idx  = node_idxs(:,i)
+          end if
+        end do
+        if (present(xyz_eval)) xyz_eval = xyz_out
+      end if
+    end if
+    uv = zero
   end subroutine get_min_distance
 
 end module wall_info_type
@@ -6825,6 +6911,7 @@ module grid_derived_type
     procedure, public, pass :: setup   => init_grid_type
     procedure, public, pass :: destroy => deallocate_grid
     procedure, public, pass :: make_wall_info
+    procedure, public, pass :: calculate_wall_dist_quad
   end type grid_type
 
 contains
@@ -7727,6 +7814,7 @@ contains
     if (allocated(coords_tmp))   deallocate(coords_tmp)
     if (allocated(coords_tmp_g)) deallocate(coords_tmp_g)
 
+
     ! min_dist = large
     ! do i = 1,n_bnds
     !   call grid%gblock(1)%get_min_distance(bnd_nums(i),pt,dist,max_iter=n_iter,xyz_eval=xyz_tmp,clip=.true.,out_idx=cell_idx)
@@ -7737,6 +7825,72 @@ contains
     ! end do
 
   end subroutine compute_quadrature_points
+
+  pure subroutine calculate_wall_dist_volume_quad( grid, wall_info, solve, max_faces, max_iter )
+    use wall_info_type, only : wall_info_t
+    type(grid_type),   intent(inout) :: grid
+    type(wall_info_t), intent(in)    :: wall_info
+    logical, optional, intent(in)    :: solve
+    integer, optional, intent(in)    :: max_faces, max_iter
+    integer :: b, i, j, k, q
+    integer, dimension(3) :: lo, hi
+    real(dp), dimension(3) :: xyz_pt
+    real(dp) :: min_dist
+    do b = 1, grid%n_blocks
+      lo = lbound(grid%gblock(b)%grid_vars%quad_curv)
+      hi = ubound(grid%gblock(b)%grid_vars%quad_curv)
+      do k = lo(3),hi(3)
+        do j = lo(2),hi(2)
+          do i = lo(1),hi(1)
+            do q = 1,grid%gblock(b)%grid_vars%quad_curv(i,j,k)%n_quad
+              xyz_pt = grid%gblock(b)%grid_vars%quad_curv(i,j,k)%quad_pts(:,q)
+              call wall_info%get_min_distance(xyz_pt,min_dist,solve=.true.,clip=.true.,max_faces=max_faces,max_iter=max_iter)
+              grid%gblock(b)%grid_vars%quad_curv(i,j,k)%wall_distance(q) = min_dist
+            end do
+          end do
+        end do
+      end do
+    end do
+  end subroutine calculate_wall_dist_volume_quad
+
+  pure subroutine calculate_wall_dist_face_quad( grid, wall_info, solve, max_faces, max_iter )
+    use wall_info_type, only : wall_info_t
+    type(grid_type),   intent(inout) :: grid
+    type(wall_info_t), intent(in)    :: wall_info
+    logical, optional, intent(in)    :: solve
+    integer, optional, intent(in)    :: max_faces, max_iter
+    integer :: b, d, i, j, k, q
+    integer, dimension(3) :: lo, hi
+    real(dp), dimension(3) :: xyz_pt
+    real(dp) :: min_dist
+    do b = 1, grid%n_blocks
+      do d = 1,grid%n_dim
+        lo = lbound(grid%gblock(b)%grid_vars%face_quads_curv(d)%p)
+        hi = ubound(grid%gblock(b)%grid_vars%face_quads_curv(d)%p)
+        do k = lo(3),hi(3)
+          do j = lo(2),hi(2)
+            do i = lo(1),hi(1)
+              do q = 1,grid%gblock(b)%grid_vars%face_quads_curv(d)%p(i,j,k)%n_quad
+                xyz_pt = grid%gblock(b)%grid_vars%face_quads_curv(d)%p(i,j,k)%quad_pts(:,q)
+                call wall_info%get_min_distance(xyz_pt,min_dist,solve=.true.,clip=.true.,max_faces=max_faces,max_iter=max_iter)
+                grid%gblock(b)%grid_vars%face_quads_curv(d)%p(i,j,k)%wall_distance(q) = min_dist
+              end do
+            end do
+          end do
+        end do
+      end do
+    end do
+  end subroutine calculate_wall_dist_face_quad
+
+  pure subroutine calculate_wall_dist_quad( this, wall_info, solve, max_faces, max_iter )
+    use wall_info_type, only : wall_info_t
+    class(grid_type),  intent(inout) :: this
+    type(wall_info_t), intent(in)    :: wall_info
+    logical, optional, intent(in)    :: solve
+    integer, optional, intent(in)    :: max_faces, max_iter
+    call calculate_wall_dist_volume_quad( this, wall_info, solve=solve, max_faces=max_faces, max_iter=max_iter )
+    call calculate_wall_dist_face_quad(   this, wall_info, solve=solve, max_faces=max_faces, max_iter=max_iter )
+  end subroutine calculate_wall_dist_quad
 
   pure elemental subroutine deallocate_grid(this)
     use set_constants, only : zero
@@ -7846,6 +8000,7 @@ contains
   pure subroutine make_wall_info( grid, bounds, info )
     use wall_info_type,     only : wall_info_t
     use boundary_info_type, only : bc_holder_t
+    use index_conversion,   only : get_face_info_from_id
     class(grid_type),                intent(in)  :: grid
     type(bc_holder_t), dimension(:), intent(in)  :: bounds
     type(wall_info_t),               intent(out) :: info
@@ -7853,7 +8008,7 @@ contains
     integer, dimension(2) :: shp
     integer, dimension(3) :: lo, hi
     integer :: b, n, i, j, k, cnt
-    integer :: tmp, dir, face_label, block_id
+    integer :: tmp, dir, off, face_label, block_id
 
     ! count the total number of faces
     cnt = 0
@@ -7881,7 +8036,9 @@ contains
               do i = lo(1),hi(1)
                 face_label = bounds(b)%bc(n)%face_label
                 block_id   = bounds(b)%bc(n)%block_id
-                dir = merge(1,-1,mod(face_label,2)==0) * face_label/2
+                ! dir = merge(1,-1,mod(face_label,2)==0) * face_label/2
+                call get_face_info_from_id(face_label,dir,off)
+                dir = dir * (2*off-1)
                 call grid%gblock(block_id)%get_fg_face_nodes([i,j,k],shp,dir)
                 allocate( face_nodes(shp(1),shp(2),3) )
                 call grid%gblock(block_id)%get_fg_face_nodes([i,j,k],shp,dir,face_nodes=face_nodes)
@@ -8816,36 +8973,48 @@ contains
     call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid_l, delta=grid_perturb, x1_map=geom_space_wrapper )
   end subroutine make_grid
 
-  subroutine output_gblock( grid, blk, file_name, old, strand_id, solution_time )
+  subroutine output_gblock( grid, blk, file_name, old, n_skip, wall_info, strand_id, solution_time )
     use tecplot_output, only : write_tecplot_ordered_zone_header
     use tecplot_output, only : write_tecplot_ordered_zone_block_packed
     use grid_derived_type,          only : grid_type
+    use wall_info_type,    only : wall_info_t
+    use string_stuff,  only : progress_line
+    use set_constants, only : zero
     type(grid_type),                 intent(in)    :: grid
     integer,                         intent(in)    :: blk
     character(*),                    intent(in)    :: file_name
     logical,                         intent(inout) :: old
+    integer, dimension(3), optional, intent(in)    :: n_skip
+    type(wall_info_t),     optional, intent(in)    :: wall_info
     integer,               optional, intent(in)    :: strand_id
     real(dp),              optional, intent(in)    :: solution_time
-    integer,  dimension(grid%n_dim) :: n_nodes
+    integer,  dimension(grid%n_dim) :: n_nodes, n_skip_
     integer :: lin_idx
     real(dp), dimension(0,0) :: CELL_DATA
     real(dp), dimension(:,:), allocatable :: NODE_DATA
+    real(dp), dimension(3) :: xyz_pt
+    real(dp) :: min_dist
     character(*), dimension(3), parameter :: xyz        = ['x','y','z']
+    character(*),               parameter :: wd         = 'wall_distance'
     character(100), dimension(:), allocatable :: var_names
     character(100) :: zone_name, tmp_name
     integer, dimension(3) :: lo,hi,stride
 
     integer :: n_dim, n_vars, n_node_vars, n_cell_vars
     integer :: fid, cnt, i, j, k
-    logical :: file_exists
+    logical :: file_exists, print_wd
+    n_skip_ = grid%gblock(1)%n_skip(1:grid%n_dim)
+    if ( present(n_skip) ) n_skip_ = n_skip(1:grid%n_dim)
+    print_wd = .false.
+    if ( present(wall_info) ) print_wd = .true.
 
     n_dim = grid%n_dim
 
-    n_node_vars = n_dim
+    n_node_vars = n_dim + merge(1,0,print_wd)
     n_cell_vars = 0
     n_vars      = n_node_vars + n_cell_vars
 
-    n_nodes     = ( grid%gblock(blk)%n_nodes(1:grid%n_dim) - 1 )/grid%gblock(1)%n_skip(1:grid%n_dim) + 1
+    n_nodes     = ( grid%gblock(blk)%n_nodes(1:grid%n_dim) - 1 )/n_skip_ + 1
 
     allocate( var_names( n_vars ) )
     allocate( NODE_DATA( n_node_vars, product(n_nodes) ) )
@@ -8857,6 +9026,7 @@ contains
       cnt = cnt + 1
       var_names(cnt) = xyz(i)
     end do
+    if ( print_wd ) var_names(cnt+1) = wd
 
     lo(1) = lbound( grid%gblock(blk)%node_coords,dim=2)
     lo(2) = lbound( grid%gblock(blk)%node_coords,dim=3)
@@ -8867,12 +9037,19 @@ contains
     hi(3) = ubound( grid%gblock(blk)%node_coords,dim=4)
     
     cnt = 0
-    stride = 1; stride(1:grid%n_dim) = grid%gblock(blk)%n_skip(1:grid%n_dim)
+    stride = 1; stride(1:grid%n_dim) = n_skip_
     do k = lo(3),hi(3),stride(3)
       do j = lo(2),hi(2),stride(2)
         do i = lo(1),hi(1),stride(1)
           cnt = cnt + 1
           NODE_DATA( 1:n_dim, cnt ) = grid%gblock(blk)%node_coords(1:n_dim,i,j,k)
+          if ( print_wd ) then
+            call progress_line('Calculating wall distance: Node ',cnt, size(NODE_DATA,2) )
+            xyz_pt = zero
+            xyz_pt(1:n_dim) = NODE_DATA( 1:n_dim, cnt )
+            call wall_info%get_min_distance( xyz_pt, min_dist, solve=.true.,clip=.true.,max_iter=10 )
+            NODE_DATA( n_dim+1, cnt ) = min_dist
+          end if
         end do
       end do
     end do
@@ -9140,10 +9317,13 @@ contains
     deallocate( var_names, NODE_DATA )
   end subroutine output_line_subzone
 
-  subroutine output_grid( grid, file_name, strand_id, solution_time )
+  subroutine output_grid( grid, file_name, n_skip, wall_info, strand_id, solution_time )
     use grid_derived_type,          only : grid_type
+    use wall_info_type,             only : wall_info_t
     type(grid_type),                 intent(in)    :: grid
     character(*),                    intent(in)    :: file_name
+    integer, dimension(3), optional, intent(in)    :: n_skip
+    type(wall_info_t),     optional, intent(in)    :: wall_info
     integer,               optional, intent(in)    :: strand_id
     real(dp),              optional, intent(in)    :: solution_time
     logical :: old
@@ -9152,7 +9332,7 @@ contains
     old = .false.
 
     do blk = 1,grid%n_blocks
-      call output_gblock(grid,blk,file_name,old,strand_id=strand_id,solution_time=solution_time)
+      call output_gblock(grid,blk,file_name,old,n_skip=n_skip,wall_info=wall_info,strand_id=strand_id,solution_time=solution_time)
     end do
   end subroutine output_grid
 
@@ -9206,8 +9386,8 @@ program main
   n_dim   = 2
   n_nodes = [9,17,1]
   n_ghost = [0,0,0]
-  ! n_skip  = [2,2,0]
-  n_skip  = [1,1,0]
+  n_skip  = [2,2,0]
+  ! n_skip  = [1,1,0]
 
   n_iter   = 100
   n_pts = 100
@@ -9225,14 +9405,14 @@ program main
 
   ! call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
   ! setup_grid_read(file_name, n_dim, n_ghost, n_skip, grid)
-  call setup_grid('/mnt/c/Users/wajordan/Desktop/_kt0257x0065/kt.grd',n_dim,n_ghost,n_skip,grid)
-  ! call setup_grid('/mnt/c/Users/Will/Desktop/MY_CASES/_kt0513x0129/kt.grd',n_dim,n_ghost,n_skip,grid)
+  ! call setup_grid('/mnt/c/Users/wajordan/Desktop/_kt0257x0065/kt.grd',n_dim,n_ghost,n_skip,grid)
+  call setup_grid('/mnt/c/Users/Will/Desktop/MY_CASES/_kt0513x0129/kt.grd',n_dim,n_ghost,n_skip,grid)
   n_nodes = grid%gblock(1)%n_nodes
 
   allocate( bounds(1) )
   call bounds%create(1)
-  ! call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [129,385,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
-  call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [49,81,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
+  call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [129,385,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
+  ! call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [49,81,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
   ! do j = 1,size(bounds)
   !   do i = 1,bounds(j)%n_bounds
   !     call bounds(j)%bc(i)%create()
@@ -9240,6 +9420,8 @@ program main
   ! end do
 
   call grid%make_wall_info(bounds,wall_info)
+
+  ! call grid%calculate_wall_dist_quad( wall_info, solve=.true., max_faces=4, max_iter=10 )
 
   allocate( pts(3,n_t_pts) )
   ! allocate( pts(3,n_pts) )
@@ -9249,14 +9431,14 @@ program main
 
   pts = reshape(annulus_mesh(1,n_pts,1,end_pts=reshape([1.5_dp,zero,zero,three,half*pi,zero],[3,2])),[3,n_t_pts])
 
-  call output_grid( grid, file_name )
+  call output_grid( grid, file_name, n_skip=[1,1,0], wall_info=wall_info )
   old = .true.
 
   
   allocate(out_vec(3,2))
   ! do j = 495,495 !1,n_t_pts
   do j = 1,n_t_pts
-    ! pt = rand_coord_in_range(3,[two,two,two],[three,three,three])
+    ! pt = rand_coord_in_range(3,[-two,-two,zero],[three,two,zero])
     pt = pts(:,j)
     ! pt = [2.3749641296722843_dp,1.8223740721795063_dp,-0.19620938769042878_dp]
     xyz_eval = zero
