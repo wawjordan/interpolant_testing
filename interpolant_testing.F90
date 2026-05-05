@@ -33,106 +33,6 @@ module set_constants
   integer,  parameter :: max_text_line_length = 1024
 end module set_constants
 
-module insert
-  use set_precision, only : dp
-  implicit none
-  private
-  public :: insertion_sort_idx
-
-  interface insertion_sort_idx
-    module procedure insertion_sort_idx_i4
-    module procedure insertion_sort_idx_i8
-    module procedure insertion_sort_idx_r4
-    module procedure insertion_sort_idx_r8
-  end interface insertion_sort_idx
-contains
-
-  pure function insertion_sort_idx_i4(a) result(idx)
-    use set_precision, only : i4
-    integer(i4), dimension(:), intent(in) :: a
-    integer, dimension(size(a))       :: idx
-    integer :: n, j, i, key
-    logical :: flag
-    n = size(a)
-    idx = [(j,j=1,n)]
-    do j = 2,n
-      key = idx(j)
-      flag = .false.
-      do i = j-1,1,-1
-        flag = a(idx(i))<=a(key)
-        if (flag) exit
-        idx(i+1) = idx(i)
-      end do
-      if (.not.flag) i = 0
-      idx(i+1) = key
-    end do
-  end function insertion_sort_idx_i4
-
-  pure function insertion_sort_idx_i8(a) result(idx)
-    use set_precision, only : i8
-    integer(i8), dimension(:), intent(in) :: a
-    integer, dimension(size(a))       :: idx
-    integer :: n, j, i, key
-    logical :: flag
-    n = size(a)
-    idx = [(j,j=1,n)]
-    do j = 2,n
-      key = idx(j)
-      flag = .false.
-      do i = j-1,1,-1
-        flag = a(idx(i))<=a(key)
-        if (flag) exit
-        idx(i+1) = idx(i)
-      end do
-      if (.not.flag) i = 0
-      idx(i+1) = key
-    end do
-  end function insertion_sort_idx_i8
-
-  pure function insertion_sort_idx_r4(a) result(idx)
-    use set_precision, only : r4
-    real(r4), dimension(:), intent(in) :: a
-    integer,  dimension(size(a))       :: idx
-    integer :: n, j, i, key
-    logical :: flag
-    n = size(a)
-    idx = [(j,j=1,n)]
-    do j = 2,n
-      key = idx(j)
-      flag = .false.
-      do i = j-1,1,-1
-        flag = a(idx(i))<=a(key)
-        if (flag) exit
-        idx(i+1) = idx(i)
-      end do
-      if (.not.flag) i = 0
-      idx(i+1) = key
-    end do
-  end function insertion_sort_idx_r4
-
-  pure function insertion_sort_idx_r8(a) result(idx)
-    use set_precision, only : r8
-    real(r8), dimension(:), intent(in) :: a
-    integer,  dimension(size(a))       :: idx
-    integer :: n, j, i, key
-    logical :: flag
-    n = size(a)
-    idx = [(j,j=1,n)]
-    do j = 2,n
-      key = idx(j)
-      flag = .false.
-      do i = j-1,1,-1
-        flag = a(idx(i))<=a(key)
-        if (flag) exit
-        idx(i+1) = idx(i)
-      end do
-      if (.not.flag) i = 0
-      idx(i+1) = key
-    end do
-  end function insertion_sort_idx_r8
-
-end module insert
-
 module project_inputs
   use set_constants, only : zero, one, max_text_line_length
   use set_precision, only : dp
@@ -786,6 +686,336 @@ contains
     end do
   end subroutine partition_1D
 end module quick_sort
+
+module insert
+  use set_precision, only : dp
+  implicit none
+  private
+  public :: insertion_sort, insertion_sort_idx
+
+  interface insertion_sort
+    module procedure insertion_sort_i4
+    module procedure insertion_sort_i8
+    module procedure insertion_sort_r4
+    module procedure insertion_sort_r8
+  end interface insertion_sort
+
+  interface insertion_sort_idx
+    module procedure insertion_sort_idx_i4
+    module procedure insertion_sort_idx_i8
+    module procedure insertion_sort_idx_r4
+    module procedure insertion_sort_idx_r8
+  end interface insertion_sort_idx
+contains
+
+  pure subroutine insertion_sort_i4(a)
+    use set_precision, only : i4
+    integer(i4), dimension(:), intent(inout) :: a
+    integer(i4) :: key
+    integer :: n, j, i
+    logical :: flag
+    n = size(a)
+    do j = 2,n
+      key = a(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(i)<=key
+        if (flag) exit
+        a(i+1) = a(i)
+      end do
+      if (.not.flag) i = 0
+      a(i+1) = key
+    end do
+  end subroutine insertion_sort_i4
+
+  pure subroutine insertion_sort_i8(a)
+    use set_precision, only : i8
+    integer(i8), dimension(:), intent(inout) :: a
+    integer(i8) :: key
+    integer :: n, j, i
+    logical :: flag
+    n = size(a)
+    do j = 2,n
+      key = a(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(i)<=key
+        if (flag) exit
+        a(i+1) = a(i)
+      end do
+      if (.not.flag) i = 0
+      a(i+1) = key
+    end do
+  end subroutine insertion_sort_i8
+
+  pure subroutine insertion_sort_r4(a)
+    use set_precision, only : r4
+    real(r4), dimension(:), intent(inout) :: a
+    real(r4) :: key
+    integer :: n, j, i
+    logical :: flag
+    n = size(a)
+    do j = 2,n
+      key = a(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(i)<=key
+        if (flag) exit
+        a(i+1) = a(i)
+      end do
+      if (.not.flag) i = 0
+      a(i+1) = key
+    end do
+  end subroutine insertion_sort_r4
+
+  pure subroutine insertion_sort_r8(a)
+    use set_precision, only : r8
+    real(r8), dimension(:), intent(inout) :: a
+    real(r8) :: key
+    integer :: n, j, i
+    logical :: flag
+    n = size(a)
+    do j = 2,n
+      key = a(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(i)<=key
+        if (flag) exit
+        a(i+1) = a(i)
+      end do
+      if (.not.flag) i = 0
+      a(i+1) = key
+    end do
+  end subroutine insertion_sort_r8
+
+  pure function insertion_sort_idx_i4(a) result(idx)
+    use set_precision, only : i4
+    integer(i4), dimension(:), intent(in) :: a
+    integer, dimension(size(a))       :: idx
+    integer :: n, j, i, key
+    logical :: flag
+    n = size(a)
+    idx = [(j,j=1,n)]
+    do j = 2,n
+      key = idx(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(idx(i))<=a(key)
+        if (flag) exit
+        idx(i+1) = idx(i)
+      end do
+      if (.not.flag) i = 0
+      idx(i+1) = key
+    end do
+  end function insertion_sort_idx_i4
+
+  pure function insertion_sort_idx_i8(a) result(idx)
+    use set_precision, only : i8
+    integer(i8), dimension(:), intent(in) :: a
+    integer, dimension(size(a))       :: idx
+    integer :: n, j, i, key
+    logical :: flag
+    n = size(a)
+    idx = [(j,j=1,n)]
+    do j = 2,n
+      key = idx(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(idx(i))<=a(key)
+        if (flag) exit
+        idx(i+1) = idx(i)
+      end do
+      if (.not.flag) i = 0
+      idx(i+1) = key
+    end do
+  end function insertion_sort_idx_i8
+
+  pure function insertion_sort_idx_r4(a) result(idx)
+    use set_precision, only : r4
+    real(r4), dimension(:), intent(in) :: a
+    integer,  dimension(size(a))       :: idx
+    integer :: n, j, i, key
+    logical :: flag
+    n = size(a)
+    idx = [(j,j=1,n)]
+    do j = 2,n
+      key = idx(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(idx(i))<=a(key)
+        if (flag) exit
+        idx(i+1) = idx(i)
+      end do
+      if (.not.flag) i = 0
+      idx(i+1) = key
+    end do
+  end function insertion_sort_idx_r4
+
+  pure function insertion_sort_idx_r8(a) result(idx)
+    use set_precision, only : r8
+    real(r8), dimension(:), intent(in) :: a
+    integer,  dimension(size(a))       :: idx
+    integer :: n, j, i, key
+    logical :: flag
+    n = size(a)
+    idx = [(j,j=1,n)]
+    do j = 2,n
+      key = idx(j)
+      flag = .false.
+      do i = j-1,1,-1
+        flag = a(idx(i))<=a(key)
+        if (flag) exit
+        idx(i+1) = idx(i)
+      end do
+      if (.not.flag) i = 0
+      idx(i+1) = key
+    end do
+  end function insertion_sort_idx_r8
+
+end module insert
+
+module remove_duplicates
+  use insert, only : insertion_sort_idx
+  implicit none
+  private
+  public :: remove_duplicates_unsorted_idx
+  public :: remove_duplicates_sorted_idx
+
+  interface remove_duplicates_unsorted_idx
+    module procedure remove_duplicates_unsorted_idx_i4
+    module procedure remove_duplicates_unsorted_idx_i8
+    module procedure remove_duplicates_unsorted_idx_r4
+    module procedure remove_duplicates_unsorted_idx_r8
+  end interface remove_duplicates_unsorted_idx
+
+  interface remove_duplicates_sorted_idx
+    module procedure remove_duplicates_sorted_idx_i4
+    module procedure remove_duplicates_sorted_idx_i8
+    module procedure remove_duplicates_sorted_idx_r4
+    module procedure remove_duplicates_sorted_idx_r8
+  end interface remove_duplicates_sorted_idx
+
+contains
+
+  pure subroutine remove_duplicates_unsorted_idx_i4(a,idx,n_unique)
+    use set_precision, only : i4
+    integer(i4), dimension(:),   intent(in)  :: a
+    integer, dimension(size(a)), intent(out) :: idx
+    integer,                     intent(out) :: n_unique
+    integer :: i, n
+    n = size(a)
+    n_unique = min(n,1)
+    if (n==0) return
+    idx = 1
+    do i = 2,n
+      if (any(a(idx(1:n_unique))==a(i))) cycle
+      n_unique = n_unique + 1
+      idx(n_unique) = i
+    end do
+  end subroutine remove_duplicates_unsorted_idx_i4
+
+  pure subroutine remove_duplicates_unsorted_idx_i8(a,idx,n_unique)
+    use set_precision, only : i8
+    integer(i8), dimension(:),   intent(in)  :: a
+    integer, dimension(size(a)), intent(out) :: idx
+    integer,                     intent(out) :: n_unique
+    integer :: i, n
+    n = size(a)
+    n_unique = min(n,1)
+    if (n==0) return
+    idx = 1
+    do i = 2,n
+      if (any(a(idx(1:n_unique))==a(i))) cycle
+      n_unique = n_unique + 1
+      idx(n_unique) = i
+    end do
+  end subroutine remove_duplicates_unsorted_idx_i8
+
+  pure subroutine remove_duplicates_unsorted_idx_r4(a,idx,n_unique)
+    use set_precision, only : r4
+    real(r4), dimension(:),       intent(in)  :: a
+    integer,  dimension(size(a)), intent(out) :: idx
+    integer,                      intent(out) :: n_unique
+    integer :: i, n
+    n = size(a)
+    n_unique = min(n,1)
+    if (n==0) return
+    idx = 1
+    do i = 2,n
+      ! if (any(a(idx(1:n_unique))==a(i))) cycle
+      if ( any( abs(a(idx(1:n_unique))-a(i)) < epsilon(a(i)) ) ) cycle
+      n_unique = n_unique + 1
+      idx(n_unique) = i
+    end do
+  end subroutine remove_duplicates_unsorted_idx_r4
+
+  pure subroutine remove_duplicates_unsorted_idx_r8(a,idx,n_unique)
+    use set_precision, only : r8
+    real(r8), dimension(:),       intent(in)  :: a
+    integer,  dimension(size(a)), intent(out) :: idx
+    integer,                      intent(out) :: n_unique
+    integer :: i, n
+    n = size(a)
+    n_unique = min(n,1)
+    if (n==0) return
+    idx = 1
+    do i = 2,n
+      ! if (any(a(idx(1:n_unique))==a(i))) cycle
+      if ( any( abs(a(idx(1:n_unique))-a(i)) < epsilon(a(i)) ) ) cycle
+      n_unique = n_unique + 1
+      idx(n_unique) = i
+    end do
+  end subroutine remove_duplicates_unsorted_idx_r8
+
+  pure subroutine remove_duplicates_sorted_idx_i4(a,idx,n_unique)
+    use set_precision, only : i4
+    integer(i4), dimension(:),   intent(in)  :: a
+    integer, dimension(size(a)), intent(out) :: idx
+    integer,                     intent(out) :: n_unique
+    integer, dimension(size(a)) :: idx1, idx2
+    call remove_duplicates_unsorted_idx_i4(a,idx1,n_unique)
+    idx2(1:n_unique) = insertion_sort_idx( a(idx1(1:n_unique)) )
+    idx = 0
+    idx(1:n_unique) = idx1(idx2(1:n_unique))
+  end subroutine remove_duplicates_sorted_idx_i4
+
+  pure subroutine remove_duplicates_sorted_idx_i8(a,idx,n_unique)
+    use set_precision, only : i8
+    integer(i8), dimension(:),   intent(in)  :: a
+    integer, dimension(size(a)), intent(out) :: idx
+    integer,                     intent(out) :: n_unique
+    integer, dimension(size(a)) :: idx1, idx2
+    call remove_duplicates_unsorted_idx_i8(a,idx1,n_unique)
+    idx2(1:n_unique) = insertion_sort_idx( a(idx1(1:n_unique)) )
+    idx = 0
+    idx(1:n_unique) = idx1(idx2(1:n_unique))
+  end subroutine remove_duplicates_sorted_idx_i8
+
+  pure subroutine remove_duplicates_sorted_idx_r4(a,idx,n_unique)
+    use set_precision, only : r4
+    real(r4), dimension(:),       intent(in)  :: a
+    integer,  dimension(size(a)), intent(out) :: idx
+    integer,                      intent(out) :: n_unique
+    integer, dimension(size(a)) :: idx1, idx2
+    call remove_duplicates_unsorted_idx_r4(a,idx1,n_unique)
+    idx2(1:n_unique) = insertion_sort_idx( a(idx1(1:n_unique)) )
+    idx = 0
+    idx(1:n_unique) = idx1(idx2(1:n_unique))
+  end subroutine remove_duplicates_sorted_idx_r4
+
+  pure subroutine remove_duplicates_sorted_idx_r8(a,idx,n_unique)
+    use set_precision, only : r8
+    real(r8), dimension(:),       intent(in)  :: a
+    integer,  dimension(size(a)), intent(out) :: idx
+    integer,                      intent(out) :: n_unique
+    integer, dimension(size(a)) :: idx1, idx2
+    call remove_duplicates_unsorted_idx_r8(a,idx1,n_unique)
+    idx2(1:n_unique) = insertion_sort_idx( a(idx1(1:n_unique)) )
+    idx = 0
+    idx(1:n_unique) = idx1(idx2(1:n_unique))
+  end subroutine remove_duplicates_sorted_idx_r8
+
+end module remove_duplicates
 
 module swap_elements
   implicit none
@@ -5464,7 +5694,7 @@ contains
                                 max_iter, gamma, c1, c2, optim_tol_abs,        &
                                 optim_tol_rel, step_tol_abs, step_tol_rel,     &
                                 fun_tol_abs, fun_tol_rel, clip, status )
-    use math,          only : linear_solve
+    use math,          only : linear_solve, careful_divide
     use set_constants, only : near_zero, zero, one, two, four, half
     class(interpolant_w_3D_data_t),   intent(in)    :: this
     real(dp), dimension(3),           intent(in)    :: xyz_point
@@ -5479,13 +5709,13 @@ contains
     real(dp),               optional, intent(in)    :: fun_tol_abs, fun_tol_rel
     logical,                optional, intent(in)    :: clip
     integer,                optional, intent(out)   :: status
-    real(dp), dimension(this%n_dim) :: dk, xk, xkp1, dfk, dfkp1
+    real(dp), dimension(this%n_dim) :: dk, xk, xkp1, dfk, dfkp1, lo, hi, xc
     real(dp), dimension(this%n_dim,this%n_dim) :: d2fk
     real(dp) :: dfk0norm, dk0norm, fk0, fk, fkp1, eta, gamma_, c1_, c2_
     real(dp) :: opttola, opttolr, stola, stolr, ftola, ftolr
     real(dp) :: opta,    optr,    esa,   esr,   efa,   efr, dk_mag, m1, m2
     integer :: j, k, max_iter_
-    logical  :: wc1, wc2, converged, clip_
+    logical  :: wc1, wc2, converged, clip_, flag
     real(dp), parameter :: h = 1.0e-6_dp
     ! real(dp) :: a_i, a_lo, a_hi, a_im1, f_0, f_i, f_im1, df_0, df_i, df_im1
     ! logical  :: zoom, line_conv
@@ -5495,6 +5725,9 @@ contains
     ! real(dp) :: f__, fp_, fm_, f_p, f_m, fpp, fpm, fmp, fmm
 
     if ( present(status) ) status = 0
+
+    lo = -one
+    hi =  one
 
     max_iter_ = 10000
     if ( present(max_iter) ) max_iter_ = max_iter
@@ -5590,6 +5823,16 @@ contains
         ! backtracking loop
         do
           xkp1 = xk + eta*dk
+          if ( clip_ ) then
+            
+            ! call cauchy_point(this%n_dim,d2fk,dfk,xk,lo,hi,xc)
+            if ( any(abs(xkp1)>one) ) then
+              xkp1 = min( max( xkp1,-one), one )
+              eta = maxval( min( max(careful_divide( (xkp1 - xk), dk ),zero), one ) )
+              call this%pt_dist_fun(xyz_point,xkp1,fkp1,dfval=dfkp1)
+              exit
+            end if
+          end if
           esa = norm2(xkp1-xk) ! calculate change in step size
           if ((esa<stola).or.(eta<h)) then
             exit
@@ -5607,7 +5850,7 @@ contains
           eta = gamma_*eta ! calculate new eta
         end do
 
-        if ( clip_ ) xkp1 = min( max( xkp1,-one-h), one+h)
+        ! if ( clip_ ) xkp1 = min( max( xkp1,-one-h), one+h)
         
         ! 1st order optimality measure
         opta = maxval(abs(dfk))
@@ -5656,6 +5899,84 @@ contains
     if ( present(iter) ) iter = k
 
   end subroutine min_distance
+
+  pure subroutine cauchy_point(n,GG,c,x,l,u,xc)
+    use set_constants, only : near_zero, zero, half
+    use math,          only : careful_divide
+    use remove_duplicates, only : remove_duplicates_sorted_idx
+    integer,                  intent(in)  :: n
+    real(dp), dimension(n,n), intent(in)  :: GG
+    real(dp), dimension(n),   intent(in)  :: c, x, l, u
+    real(dp), dimension(n),   intent(out) :: xc
+    real(dp), dimension(n) :: g, p, xi, t_
+    real(dp), dimension(n+1) :: t
+    real(dp) :: tc, swp, fj0, fj1, fj2, dtstar
+    integer,  dimension(n) :: idx
+    integer :: j, n_unique
+    G  = matmul(GG,x)+c
+    t_ = t_bar(x,l,u,G)
+    call remove_duplicates_sorted_idx(t_, idx, n_unique)
+    if ( abs(t_(idx(1))) < near_zero ) then
+      t(1:n_unique) = t_(idx(1:n_unique))
+    else
+      t(1) = zero
+      t(2:n_unique+1) = t_(idx(1:n_unique))
+    end if
+
+    do j = 2,n_unique+1
+      xi   = x_i(x, t(j-1), G, t_ )
+      p    = boundary_projection(xi,l,u)
+      fj0 = dot_product(c,xi) + half * dot_product(xi,matmul(GG,xi))
+      fj1 = dot_product(c,p)  + dot_product(xi,matmul(GG,p))
+      fj2 = dot_product(p,matmul(GG,p))
+      
+      if ( fj1 > zero ) then
+        tc = t(j-1)
+        xc = x_i(x, tc, G, t_ )
+        return
+      end if
+
+      dtstar = careful_divide(-fj1,fj2)
+      if ( (dtstar >= zero).and.(dtstar<t(j)-t(j-1)) ) then
+        tc = t(j-1) + dtstar
+        xc = x_i(x, tc, G, t_ )
+        return
+      end if
+
+    end do
+
+  end subroutine cauchy_point
+
+  pure elemental function boundary_projection(x,l,u) result(p)
+    real(dp), intent(in) :: x, l, u
+    real(dp)             :: p
+    if ( x < l ) then
+      p = l
+    elseif (x > u) then
+      p = u
+    else
+      p = x
+    end if
+  end function boundary_projection
+
+  pure elemental function t_bar(x,l,u,g)
+    use set_constants, only : near_zero, large
+    real(dp), intent(in) :: x, l, u, g
+    real(dp)             :: t_bar
+    if ( g < -near_zero ) then
+      t_bar = (x - u)/g
+    elseif( g > near_zero ) then
+      t_bar = (x - l)/g
+    else
+      t_bar = large
+    end if
+  end function t_bar
+
+  pure elemental function x_i(x,t,g,t_bar)
+    real(dp), intent(in) :: x, t, g, t_bar
+    real(dp)             :: x_i
+      x_i = x - min(t,t_bar)*g
+  end function x_i
 
   pure elemental function interp_step_length(a_jm1,a_jm2,f_jm1,f_jm2,df_jm1,df_jm2) result(a_j)
     use set_constants, only : one, two, three
@@ -8973,7 +9294,7 @@ contains
     call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid_l, delta=grid_perturb, x1_map=geom_space_wrapper )
   end subroutine make_grid
 
-  subroutine output_gblock( grid, blk, file_name, old, n_skip, wall_info, strand_id, solution_time )
+  subroutine output_gblock( grid, blk, file_name, old, n_skip, wall_info, solve, strand_id, solution_time )
     use tecplot_output, only : write_tecplot_ordered_zone_header
     use tecplot_output, only : write_tecplot_ordered_zone_block_packed
     use grid_derived_type,          only : grid_type
@@ -8986,6 +9307,7 @@ contains
     logical,                         intent(inout) :: old
     integer, dimension(3), optional, intent(in)    :: n_skip
     type(wall_info_t),     optional, intent(in)    :: wall_info
+    logical,               optional, intent(in)    :: solve
     integer,               optional, intent(in)    :: strand_id
     real(dp),              optional, intent(in)    :: solution_time
     integer,  dimension(grid%n_dim) :: n_nodes, n_skip_
@@ -9047,7 +9369,7 @@ contains
             call progress_line('Calculating wall distance: Node ',cnt, size(NODE_DATA,2) )
             xyz_pt = zero
             xyz_pt(1:n_dim) = NODE_DATA( 1:n_dim, cnt )
-            call wall_info%get_min_distance( xyz_pt, min_dist, solve=.true.,clip=.true.,max_iter=10 )
+            call wall_info%get_min_distance( xyz_pt, min_dist, solve=solve,clip=.true.,max_iter=10 )
             NODE_DATA( n_dim+1, cnt ) = min_dist
           end if
         end do
@@ -9317,13 +9639,14 @@ contains
     deallocate( var_names, NODE_DATA )
   end subroutine output_line_subzone
 
-  subroutine output_grid( grid, file_name, n_skip, wall_info, strand_id, solution_time )
+  subroutine output_grid( grid, file_name, n_skip, wall_info, solve, strand_id, solution_time )
     use grid_derived_type,          only : grid_type
     use wall_info_type,             only : wall_info_t
     type(grid_type),                 intent(in)    :: grid
     character(*),                    intent(in)    :: file_name
     integer, dimension(3), optional, intent(in)    :: n_skip
     type(wall_info_t),     optional, intent(in)    :: wall_info
+    logical,               optional, intent(in)    :: solve
     integer,               optional, intent(in)    :: strand_id
     real(dp),              optional, intent(in)    :: solution_time
     logical :: old
@@ -9332,7 +9655,7 @@ contains
     old = .false.
 
     do blk = 1,grid%n_blocks
-      call output_gblock(grid,blk,file_name,old,n_skip=n_skip,wall_info=wall_info,strand_id=strand_id,solution_time=solution_time)
+      call output_gblock(grid,blk,file_name,old,n_skip=n_skip,wall_info=wall_info,solve=solve,strand_id=strand_id,solution_time=solution_time)
     end do
   end subroutine output_grid
 
@@ -9389,7 +9712,8 @@ program main
   n_skip  = [2,2,0]
   ! n_skip  = [1,1,0]
 
-  n_iter   = 100
+  ! n_iter   = 100
+  n_iter = 0
   n_pts = 100
   n_t_pts = n_pts**(n_dim-1)
   
@@ -9431,7 +9755,7 @@ program main
 
   pts = reshape(annulus_mesh(1,n_pts,1,end_pts=reshape([1.5_dp,zero,zero,three,half*pi,zero],[3,2])),[3,n_t_pts])
 
-  call output_grid( grid, file_name, n_skip=[1,1,0], wall_info=wall_info )
+  call output_grid( grid, file_name, n_skip=[1,1,0], wall_info=wall_info, solve=.false. )
   old = .true.
 
   
@@ -9462,10 +9786,10 @@ program main
     ! call output_face_subzone(n_dim,face_nodes,file_name,old,zone_name=trim(zone_name))
     ! deallocate( face_nodes )
   
-    out_vec(:,1) = pt
-    out_vec(:,2) = xyz_eval
-    write(zone_name,'(A,I0)') 'PT:',j
-    call output_line_subzone(n_dim,out_vec,file_name,old,zone_name=trim(zone_name))
+    ! out_vec(:,1) = pt
+    ! out_vec(:,2) = xyz_eval
+    ! write(zone_name,'(A,I0)') 'PT:',j
+    ! call output_line_subzone(n_dim,out_vec,file_name,old,zone_name=trim(zone_name))
   end do
   deallocate( out_vec )
   deallocate( pts )
