@@ -4035,6 +4035,41 @@ contains
     write(fmt,trim(fmt)) (trim(var_name(i)),i=1,n_vars)
   end subroutine write_tecplot_var_fmt
 
+  ! subroutine write_tecplot_loc_fmt( n_node_vars, n_cell_vars, fmt )
+  !   integer,      intent(in)  :: n_node_vars, n_cell_vars
+  !   character(*), intent(out) :: fmt
+  !   integer                   :: loc_ind, i
+  !   integer, dimension(4)     :: loc_range
+  !   character(100)            :: loc_cell, loc_nodal
+  !   loc_ind   = 1
+  !   loc_range = 1
+  !   if ( n_node_vars > 0 ) then
+  !     write(loc_nodal,'(A)') "('[',I0,'-',I0,']=NODAL'"
+  !     if (n_cell_vars>0) then; loc_nodal = trim(loc_nodal)//",',')"
+  !     else;                    loc_nodal = trim(loc_nodal)//")"
+  !     end if
+  !     loc_range(2) = n_node_vars
+  !     loc_ind = 2
+  !   else
+  !     write(loc_nodal,'(A)') ''
+  !   end if
+
+  !   if ( n_cell_vars > 0 ) then
+  !     write(loc_cell,'(A)') "'[',I0,'-',I0,']=CELLCENTERED')"
+  !     if (n_node_vars>0) then; loc_cell = ",("//trim(loc_cell)
+  !     else;                    loc_cell = "("//trim(loc_cell)
+  !     end if
+  !     loc_range(3) = n_node_vars + 1
+  !     loc_range(4) = n_node_vars + n_cell_vars
+  !     loc_ind = 4
+  !   else
+  !     write(loc_cell,'(A)') ''
+  !   end if
+  !   write(fmt,'(A)') "('VARLOCATION=(',"//trim(loc_nodal)//                  &
+  !                                         trim(loc_cell)//"')')"
+  !   write(fmt,trim(fmt)) (loc_range(i),i=1,loc_ind)
+  ! end subroutine write_tecplot_loc_fmt
+
   subroutine write_tecplot_loc_fmt( n_node_vars, n_cell_vars, fmt )
     integer,      intent(in)  :: n_node_vars, n_cell_vars
     character(*), intent(out) :: fmt
@@ -4044,24 +4079,38 @@ contains
     loc_ind   = 1
     loc_range = 1
     if ( n_node_vars > 0 ) then
-      write(loc_nodal,'(A)') "('[',I0,'-',I0,']=NODAL'"
-      if (n_cell_vars>0) then; loc_nodal = trim(loc_nodal)//",',')"
-      else;                    loc_nodal = trim(loc_nodal)//")"
+      if ( n_node_vars == 1 ) then
+        write(loc_nodal,'(A)') "('[',I0,']=NODAL'"
+      else
+        write(loc_nodal,'(A)') "('[',I0,'-',I0,']=NODAL'"
+        loc_range(2) = n_node_vars
+        loc_ind = 2
       end if
-      loc_range(2) = n_node_vars
-      loc_ind = 2
+      if (n_cell_vars>0) then
+        loc_nodal = trim(loc_nodal)//",',')"
+      else
+        loc_nodal = trim(loc_nodal)//")"
+      end if
     else
       write(loc_nodal,'(A)') ''
     end if
 
     if ( n_cell_vars > 0 ) then
-      write(loc_cell,'(A)') "'[',I0,'-',I0,']=CELLCENTERED')"
-      if (n_node_vars>0) then; loc_cell = ",("//trim(loc_cell)
-      else;                    loc_cell = "("//trim(loc_cell)
+      if ( n_cell_vars == 1 ) then
+        write(loc_cell,'(A)') "'[',I0,']=CELLCENTERED')"
+        loc_range(3) = n_node_vars + n_cell_vars
+        loc_ind = 3
+      else
+        write(loc_cell,'(A)') "'[',I0,'-',I0,']=CELLCENTERED')"
+        loc_range(3) = n_node_vars + 1
+        loc_range(4) = n_node_vars + n_cell_vars
+        loc_ind = 4
       end if
-      loc_range(3) = n_node_vars + 1
-      loc_range(4) = n_node_vars + n_cell_vars
-      loc_ind = 4
+      if (n_node_vars>0) then
+        loc_cell = ",("//trim(loc_cell)
+      else
+        loc_cell = "("//trim(loc_cell)
+      end if
     else
       write(loc_cell,'(A)') ''
     end if
@@ -9312,8 +9361,8 @@ contains
     real(dp),              optional, intent(in)    :: solution_time
     integer,  dimension(grid%n_dim) :: n_nodes, n_skip_
     integer :: lin_idx
-    real(dp), dimension(0,0) :: CELL_DATA
-    real(dp), dimension(:,:), allocatable :: NODE_DATA
+    ! real(dp), dimension(0,0) :: CELL_DATA
+    real(dp), dimension(:,:), allocatable :: NODE_DATA, CELL_DATA
     real(dp), dimension(3) :: xyz_pt
     real(dp) :: min_dist
     character(*), dimension(3), parameter :: xyz        = ['x','y','z']
@@ -9333,13 +9382,14 @@ contains
     n_dim = grid%n_dim
 
     n_node_vars = n_dim + merge(1,0,print_wd)
-    n_cell_vars = 0
+    n_cell_vars = 0 + merge(1,0,print_wd)
     n_vars      = n_node_vars + n_cell_vars
 
     n_nodes     = ( grid%gblock(blk)%n_nodes(1:grid%n_dim) - 1 )/n_skip_ + 1
 
     allocate( var_names( n_vars ) )
     allocate( NODE_DATA( n_node_vars, product(n_nodes) ) )
+    allocate( CELL_DATA( n_cell_vars, product(max(n_nodes-1,1)) ) )
 
     write(zone_name,'(A,I0)') "'BLOCK:'",blk
 
@@ -9349,6 +9399,7 @@ contains
       var_names(cnt) = xyz(i)
     end do
     if ( print_wd ) var_names(cnt+1) = wd
+    if ( print_wd ) var_names(cnt+2) = wd//'_cell'
 
     lo(1) = lbound( grid%gblock(blk)%node_coords,dim=2)
     lo(2) = lbound( grid%gblock(blk)%node_coords,dim=3)
@@ -9375,6 +9426,25 @@ contains
         end do
       end do
     end do
+
+    if ( print_wd ) then
+    hi = max(hi-1,1)
+    cnt = 0
+    stride = 1; stride(1:grid%n_dim) = n_skip_
+    do k = lo(3),hi(3),stride(3)
+      do j = lo(2),hi(2),stride(2)
+        do i = lo(1),hi(1),stride(1)
+          cnt = cnt + 1
+          call progress_line('Calculating wall distance: Cell ',cnt, size(CELL_DATA,2) )
+          xyz_pt = zero
+          xyz_pt(1:n_dim) = grid%gblock(blk)%grid_vars%cell_c(1:n_dim,i,j,k)
+          call wall_info%get_min_distance( xyz_pt, min_dist, solve=solve,clip=.true.,max_iter=10 )
+          CELL_DATA( 1, cnt ) = min_dist
+        end do
+      end do
+    end do
+  end if
+
     
     inquire( file=trim(file_name), exist=file_exists )
     if ( file_exists ) then
@@ -9400,7 +9470,7 @@ contains
                                                   n_node_vars, n_cell_vars,    &
                                                   NODE_DATA, CELL_DATA )
     close(fid)
-    deallocate( var_names, NODE_DATA )
+    deallocate( var_names, NODE_DATA, CELL_DATA )
   end subroutine output_gblock
 
   subroutine output_volume_subzone( n_dim, volume_nodes, file_name, old, zone_name, strand_id, solution_time )
@@ -9729,14 +9799,15 @@ program main
 
   ! call setup_grid( n_dim, n_nodes, n_ghost, n_skip, grid )
   ! setup_grid_read(file_name, n_dim, n_ghost, n_skip, grid)
-  ! call setup_grid('/mnt/c/Users/wajordan/Desktop/_kt0257x0065/kt.grd',n_dim,n_ghost,n_skip,grid)
-  call setup_grid('/mnt/c/Users/Will/Desktop/MY_CASES/_kt0513x0129/kt.grd',n_dim,n_ghost,n_skip,grid)
+  call setup_grid('/mnt/c/Users/wajordan/Desktop/_kt0257x0065/kt.grd',n_dim,n_ghost,n_skip,grid)
+  ! call setup_grid('/mnt/c/Users/Will/Desktop/MY_CASES/_kt0513x0129/kt.grd',n_dim,n_ghost,n_skip,grid)
   n_nodes = grid%gblock(1)%n_nodes
 
   allocate( bounds(1) )
   call bounds%create(1)
-  call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [129,385,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
+  ! call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [129,385,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
   ! call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [49,81,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
+  call bounds(1)%bc(1)%create(n_dim, 1, 1, 202, [97,161,1,1], node_bnd_min=[1,1,1], node_bnd_max=n_nodes, n_skip=n_skip )
   ! do j = 1,size(bounds)
   !   do i = 1,bounds(j)%n_bounds
   !     call bounds(j)%bc(i)%create()
@@ -9755,7 +9826,8 @@ program main
 
   pts = reshape(annulus_mesh(1,n_pts,1,end_pts=reshape([1.5_dp,zero,zero,three,half*pi,zero],[3,2])),[3,n_t_pts])
 
-  call output_grid( grid, file_name, n_skip=[1,1,0], wall_info=wall_info, solve=.false. )
+  call output_grid( grid, 'y_solve_'//file_name, n_skip=[1,1,0], wall_info=wall_info, solve=.true. )
+  call output_grid( grid, 'n_solve_'//file_name, n_skip=[1,1,0], wall_info=wall_info, solve=.false. )
   old = .true.
 
   
